@@ -170,3 +170,39 @@ def test_local_provider_note_has_download_links(
     dialog.close()
     dialog.deleteLater()
     app.processEvents()
+
+
+
+def test_world_map_skips_repaint_for_identical_endpoint_snapshots(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    widget = WorldMap(get_palette("dark"), "No map data")
+    updates: list[bool] = []
+    widget.update = lambda *_args: updates.append(True)
+    endpoint = {
+        "ip": "8.8.8.8",
+        "latitude": 37.4,
+        "longitude": -122.0,
+        "country": "United States",
+        "region": "California",
+        "city": "Mountain View",
+    }
+
+    widget.set_locations([endpoint])
+    assert len(updates) == 1
+    assert len(widget._location_world_points) == 1
+
+    widget._hovered_index = 0
+    widget.set_locations([dict(endpoint)])
+    assert len(updates) == 1
+    assert widget._hovered_index == 0
+
+    changed = dict(endpoint, city="Sunnyvale")
+    widget.set_locations([changed])
+    assert len(updates) == 2
+    assert widget._hovered_index is None
+
+    widget.deleteLater()
+    app.processEvents()
