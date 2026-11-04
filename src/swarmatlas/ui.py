@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, Signal
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
-    QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .collector import NetworkWorker, available_interfaces
 from .config import AppConfig
 from .i18n import tr, translate_status
-from .theme import get_palette
+from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
 from .utils import format_bytes, format_rate
 
 
@@ -38,12 +40,28 @@ def make_label(
     return label
 
 
+def update_table(table: QTableWidget, rows: list[list[str]]) -> None:
+    """Update existing cells in place to avoid clearing/recreating tables every second."""
+    table.setUpdatesEnabled(False)
+    try:
+        table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            for column_index, value in enumerate(row):
+                item = table.item(row_index, column_index)
+                if item is None:
+                    table.setItem(row_index, column_index, QTableWidgetItem(value))
+                elif item.text() != value:
+                    item.setText(value)
+    finally:
+        table.setUpdatesEnabled(True)
+        table.viewport().update()
+
+
 class MetricCard(QFrame):
     def __init__(self, title: str, accent: str, hint: str, palette: dict[str, str]):
         super().__init__()
         self.setObjectName("card")
         self.setMinimumHeight(112)
-        self.palette_colors = palette
         self.accent = accent
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 15, 18, 14)
@@ -51,19 +69,109 @@ class MetricCard(QFrame):
         self.title = make_label(title, 10, palette["muted"], 600)
         self.value = make_label("—", 23, accent, 600)
         self.hint = make_label(hint, 9, palette["muted"])
+        self._opacity = QGraphicsOpacityEffect(self.value)
+        self._opacity.setOpacity(1.0)
+        self.value.setGraphicsEffect(self._opacity)
+        self._fade = QPropertyAnimation(self._opacity, b"opacity", self)
+        self._fade.setDuration(170)
+        self._fade.setStartValue(0.76)
+        self._fade.setEndValue(1.0)
+        self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
         layout.addWidget(self.title)
         layout.addWidget(self.value)
         layout.addWidget(self.hint)
 
-    def set_theme(self, palette: dict[str, str]) -> None:
-        self.palette_colors = palette
-        self.title.setStyleSheet(f"color: {palette['muted']}; background: transparent;")
-        self.hint.setStyleSheet(f"color: {palette['muted']}; background: transparent;")
-
     def set_value(self, value: str, hint: str | None = None) -> None:
-        self.value.setText(value)
-        if hint is not None:
+        changed = self.value.text() != value
+        if changed:
+            self.value.setText(value)
+            self._fade.stop()
+            self._opacity.setOpacity(0.76)
+            self._fade.start()
+        if hint is not None and self.hint.text() != hint:
             self.hint.setText(hint)
+
+
+class GeoIPDatabaseDialog(QDialog):
+    def __init__(self, paths: list[str], language: str, palette: dict[str, str], parent=None):
+        super().__init__(parent)
+        self.language = language
+        self.palette = palette
+        self.setWindowTitle(tr("geoip_settings", language))
+        self.setMinimumSize(540, 370)
+
+        layout = QVBoxLayout(self)
+        intro = make_label(tr("geoip_dialog_intro", language), 10, palette["text"])
+        intro.setWordWrap(True)
+        note = make_label(tr("geoip_privacy_note", language), 9, palette["muted"])
+        note.setWordWrap(True)
+        layout.addWidget(intro)
+        layout.addWidget(note)
+
+        self.items = QListWidget()
+        self.items.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        layout.addWidget(self.items, 1)
+        for path in paths:
+            self._add_path(path)
+
+        actions = QHBoxLayout()
+        self.add_button = QPushButton(tr("geoip_add", language))
+        self.add_button.setObjectName("quiet")
+        self.remove_button = QPushButton(tr("geoip_remove", language))
+        self.remove_button.setObjectName("quiet")
+        self.add_button.clicked.connect(self.add_databases)
+        self.remove_button.clicked.connect(self.remove_selected)
+        actions.addWidget(self.add_button)
+        actions.addWidget(self.remove_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.setStyleSheet(
+            f"QDialog {{ background: {palette['bg']}; color: {palette['text']}; }}"
+            f"QListWidget {{ background: {palette['surface']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 8px; padding: 6px; }}"
+            f"QPushButton {{ background: {palette['surface_alt']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 7px; padding: 7px 11px; }}"
+            f"QPushButton:hover {{ border-color: {palette['accent']}; }}"
+        )
+
+    def _add_path(self, path: str) -> None:
+        normalized = str(Path(path).expanduser())
+        key = normalized.casefold()
+        if any(
+            str(self.items.item(i).data(Qt.ItemDataRole.UserRole)).casefold() == key
+            for i in range(self.items.count())
+        ):
+            return
+        item = QListWidgetItem(f"{Path(normalized).name}   ·   {normalized}")
+        item.setData(Qt.ItemDataRole.UserRole, normalized)
+        item.setToolTip(normalized)
+        self.items.addItem(item)
+
+    def add_databases(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            tr("geoip_title", self.language),
+            "",
+            tr("geoip_filter", self.language),
+        )
+        for path in paths:
+            self._add_path(path)
+
+    def remove_selected(self) -> None:
+        for item in self.items.selectedItems():
+            self.items.takeItem(self.items.row(item))
+
+    def selected_paths(self) -> list[str]:
+        return [
+            str(self.items.item(index).data(Qt.ItemDataRole.UserRole))
+            for index in range(self.items.count())
+        ]
 
 
 class TrafficChart(QWidget):
@@ -201,32 +309,51 @@ class WorldMap(QWidget):
 
 
 class MainWindow(QMainWindow):
+    initialization_ready = Signal(str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SwarmAtlas")
         self.resize(1320, 860)
         self.setMinimumSize(1050, 700)
         self.config = AppConfig.load()
-        self.palette = get_palette(self.config.theme)
+        self.current_theme = resolve_theme(self.config.theme)
+        self.current_language = resolve_language(self.config.language)
+        self.palette = get_palette(self.current_theme)
+        self._mica_attempted = False
+        self._mica_applied = False
         self.worker = NetworkWorker(self.config)
-        self._apply_theme()
-        self._build_ui()
         self.worker.snapshot_ready.connect(self.update_snapshot)
         self.worker.status_changed.connect(self.update_geo_status)
-        self.worker.start()
+        self.worker.startup_ready.connect(self.initialization_ready)
+
+        self._build_ui()
+        self._style_hints = QGuiApplication.styleHints()
+        color_signal = getattr(self._style_hints, "colorSchemeChanged", None)
+        if color_signal is not None:
+            color_signal.connect(self._on_system_theme_changed)
 
     def t(self, key: str, **values: object) -> str:
-        return tr(key, self.config.language, **values)
+        return tr(key, self.current_language, **values)
+
+    def start_monitor(self) -> None:
+        if not self.worker.isRunning():
+            self.worker.start()
 
     def _apply_theme(self) -> None:
         c = self.palette
+        window_bg = c["mica_window"] if self._mica_applied else c["bg"]
+        surface = c["mica_surface"] if self._mica_applied else c["surface"]
+        sidebar_surface = c["mica_sidebar"] if self._mica_applied else c["surface"]
         self.setStyleSheet(
             f"""
+            QMainWindow {{ background: {window_bg}; }}
             QWidget {{ color: {c['text']}; font-family: 'Segoe UI'; }}
-            QMainWindow, QScrollArea, QWidget#appRoot, QWidget#content {{ background: {c['bg']}; }}
             QLabel {{ background: transparent; }}
-            QFrame#sidebar {{ background: {c['surface']}; border-right: 1px solid {c['line']}; }}
-            QFrame#card {{ background: {c['surface']}; border: 1px solid {c['line']}; border-radius: 12px; }}
+            QWidget#appRoot {{ background: {window_bg}; }}
+            QWidget#content {{ background: transparent; }}
+            QFrame#sidebar {{ background: {sidebar_surface}; border-right: 1px solid {c['line']}; }}
+            QFrame#card {{ background: {surface}; border: 1px solid {c['line']}; border-radius: 12px; }}
             QPushButton#nav {{ text-align: left; padding: 10px 12px; border: 0; border-radius: 8px; color: {c['muted']}; background: transparent; }}
             QPushButton#nav:hover {{ background: {c['surface_alt']}; color: {c['text']}; }}
             QPushButton#nav[active="true"] {{ background: {c['accent_light']}; color: {c['accent']}; font-weight: 600; }}
@@ -235,14 +362,14 @@ class MainWindow(QMainWindow):
             QComboBox QAbstractItemView {{ background: {c['surface']}; color: {c['text']}; border: 1px solid {c['line']}; selection-background-color: {c['selection']}; outline: 0; padding: 4px; }}
             QPushButton#quiet {{ background: {c['surface_alt']}; color: {c['text']}; border: 1px solid {c['line']}; border-radius: 8px; padding: 8px 12px; }}
             QPushButton#quiet:hover {{ border-color: {c['accent']}; }}
-            QTableWidget {{ background: {c['surface']}; alternate-background-color: {c['surface_alt']}; color: {c['text']}; border: 0; gridline-color: {c['line']}; selection-background-color: {c['selection']}; }}
-            QHeaderView::section {{ background: {c['surface']}; color: {c['muted']}; border: 0; border-bottom: 1px solid {c['line']}; padding: 8px; }}
-            QTableCornerButton::section {{ background: {c['surface']}; border: 0; }}
-            QScrollArea {{ border: 0; }}
-            QScrollBar:vertical {{ background: {c['bg']}; width: 9px; margin: 0; }}
+            QTableWidget {{ background: {surface}; alternate-background-color: {c['surface_alt']}; color: {c['text']}; border: 0; gridline-color: {c['line']}; selection-background-color: {c['selection']}; }}
+            QHeaderView::section {{ background: {surface}; color: {c['muted']}; border: 0; border-bottom: 1px solid {c['line']}; padding: 8px; }}
+            QTableCornerButton::section {{ background: {surface}; border: 0; }}
+            QScrollArea {{ border: 0; background: transparent; }}
+            QScrollBar:vertical {{ background: {window_bg}; width: 9px; margin: 0; }}
             QScrollBar::handle:vertical {{ background: {c['scroll']}; min-height: 24px; border-radius: 4px; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-            QStatusBar {{ background: {c['surface']}; color: {c['muted']}; border-top: 1px solid {c['line']}; }}
+            QStatusBar {{ background: {surface}; color: {c['muted']}; border-top: 1px solid {c['line']}; }}
             """
         )
 
@@ -250,7 +377,13 @@ class MainWindow(QMainWindow):
         old = self.takeCentralWidget()
         if old is not None:
             old.deleteLater()
-        self.palette = get_palette(self.config.theme)
+        self.current_theme = resolve_theme(self.config.theme)
+        self.current_language = resolve_language(self.config.language)
+        self.palette = get_palette(self.current_theme)
+        if self._mica_attempted:
+            self._mica_applied = apply_windows_mica(
+                self, dark=self.current_theme == "dark"
+            )
         self._apply_theme()
         self._build_ui()
 
@@ -263,13 +396,13 @@ class MainWindow(QMainWindow):
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(228)
+        sidebar.setFixedWidth(238)
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(18, 24, 18, 18)
         side.setSpacing(10)
         side.addWidget(make_label("SwarmAtlas", 18, self.palette["text"], 700))
         side.addWidget(make_label(self.t("subtitle"), 9, self.palette["muted"]))
-        side.addSpacing(28)
+        side.addSpacing(24)
 
         self.nav_buttons: list[QPushButton] = []
         self.nav_keys = ("overview", "destinations", "history")
@@ -283,10 +416,10 @@ class MainWindow(QMainWindow):
             self.nav_buttons.append(button)
 
         side.addStretch(1)
-
         self.theme_label = make_label(self.t("theme"), 9, self.palette["muted"], 600)
         side.addWidget(self.theme_label)
         self.theme_combo = QComboBox()
+        self.theme_combo.addItem(self.t("system"), "system")
         self.theme_combo.addItem(self.t("dark"), "dark")
         self.theme_combo.addItem(self.t("light"), "light")
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(self.config.theme)))
@@ -296,6 +429,7 @@ class MainWindow(QMainWindow):
         self.language_label = make_label(self.t("language"), 9, self.palette["muted"], 600)
         side.addWidget(self.language_label)
         self.language_combo = QComboBox()
+        self.language_combo.addItem(self.t("system"), "system")
         self.language_combo.addItem(self.t("russian"), "ru")
         self.language_combo.addItem(self.t("english"), "en")
         self.language_combo.setCurrentIndex(max(0, self.language_combo.findData(self.config.language)))
@@ -304,7 +438,7 @@ class MainWindow(QMainWindow):
 
         self.geoip_button = QPushButton(self.t("geoip_settings"))
         self.geoip_button.setObjectName("quiet")
-        self.geoip_button.clicked.connect(self.choose_geoip_database)
+        self.geoip_button.clicked.connect(self.choose_geoip_databases)
         side.addWidget(self.geoip_button)
 
         content = QWidget()
@@ -410,12 +544,13 @@ class MainWindow(QMainWindow):
         peers_layout.setContentsMargins(18, 16, 18, 12)
         self.endpoints_title = make_label(self.t("recent_destinations"), 13, self.palette["text"], 600)
         peers_layout.addWidget(self.endpoints_title)
-        self.endpoint_table = QTableWidget(0, 3)
+        self.endpoint_table = QTableWidget(0, 4)
         self.endpoint_table.setHorizontalHeaderLabels([
-            self.t("ip_address"), self.t("location"), self.t("type")
+            self.t("ip_address"), self.t("provider"), self.t("location"), self.t("type")
         ])
-        self.endpoint_table.setColumnWidth(0, 120)
-        self.endpoint_table.setColumnWidth(1, 130)
+        self.endpoint_table.setColumnWidth(0, 112)
+        self.endpoint_table.setColumnWidth(1, 150)
+        self.endpoint_table.setColumnWidth(2, 120)
         self.endpoint_table.horizontalHeader().setStretchLastSection(True)
         self.endpoint_table.verticalHeader().setVisible(False)
         self.endpoint_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -435,19 +570,35 @@ class MainWindow(QMainWindow):
         outer.addWidget(scroll, 1)
         self.setCentralWidget(root)
 
+    def showEvent(self, event: Any) -> None:
+        super().showEvent(event)
+        if not self._mica_attempted:
+            self._mica_attempted = True
+            self._mica_applied = apply_windows_mica(
+                self, dark=self.current_theme == "dark"
+            )
+            if self._mica_applied:
+                self._apply_theme()
+
+    def _on_system_theme_changed(self, *_args: Any) -> None:
+        if self.config.theme == "system":
+            new_theme = resolve_theme("system")
+            if new_theme != self.current_theme:
+                self._rebuild_ui()
+
     def change_theme(self) -> None:
-        theme = str(self.theme_combo.currentData() or "dark")
-        if theme == self.config.theme:
+        preference = str(self.theme_combo.currentData() or "system")
+        if preference == self.config.theme:
             return
-        self.config.theme = theme
+        self.config.theme = preference
         self.config.save()
         self._rebuild_ui()
 
     def change_language(self) -> None:
-        language = str(self.language_combo.currentData() or "ru")
-        if language == self.config.language:
+        preference = str(self.language_combo.currentData() or "system")
+        if preference == self.config.language:
             return
-        self.config.language = language
+        self.config.language = preference
         self.config.save()
         self._rebuild_ui()
 
@@ -458,11 +609,7 @@ class MainWindow(QMainWindow):
             button.style().unpolish(button)
             button.style().polish(button)
         if key != "overview":
-            QMessageBox.information(
-                self,
-                self.t(key),
-                self.t("page_coming", page=self.t(key)),
-            )
+            QMessageBox.information(self, self.t(key), self.t("page_coming", page=self.t(key)))
 
     def change_interface(self) -> None:
         interface = str(self.interface_combo.currentData() or "auto")
@@ -470,25 +617,24 @@ class MainWindow(QMainWindow):
         self.config.save()
         self.worker.set_interface(interface)
 
-    def choose_geoip_database(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+    def choose_geoip_databases(self) -> None:
+        dialog = GeoIPDatabaseDialog(
+            self.config.resolved_geoip_databases(),
+            self.current_language,
+            self.palette,
             self,
-            self.t("geoip_title"),
-            "",
-            self.t("geoip_filter"),
         )
-        if not path:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self.config.geoip_database = path
+        paths = dialog.selected_paths()
+        self.config.geoip_databases = paths
+        self.config.geoip_database = paths[0] if paths else ""
         self.config.save()
-        QMessageBox.information(
-            self,
-            self.t("geoip_saved"),
-            self.t("geoip_restart"),
-        )
+        self.worker.set_geoip_databases(paths)
+        self.statusBar().showMessage(self.t("preparing") if paths else self.t("geoip_missing"))
 
     def update_geo_status(self, status: str) -> None:
-        self.statusBar().showMessage(translate_status(status, self.config.language))
+        self.statusBar().showMessage(translate_status(status, self.current_language))
 
     def update_snapshot(self, snapshot: dict[str, Any]) -> None:
         upload = int(snapshot.get("upload_total", 0))
@@ -511,34 +657,41 @@ class MainWindow(QMainWindow):
         self.data_note.setText(self.t("data_note_live"))
 
     def _fill_countries(self, countries: list[dict[str, Any]]) -> None:
-        self.country_table.setRowCount(len(countries) or 1)
+        rows: list[list[str]] = []
         if not countries:
-            self.country_table.setItem(0, 0, QTableWidgetItem(self.t("geoip_missing")))
-            self.country_table.setItem(0, 1, QTableWidgetItem("—"))
-            return
-        for row, item in enumerate(countries):
-            name = item.get("country") or item.get("country_code") or self.t("unknown")
-            self.country_table.setItem(row, 0, QTableWidgetItem(str(name)))
-            self.country_table.setItem(row, 1, QTableWidgetItem(str(item.get("peers", 0))))
+            rows = [[self.t("geoip_missing"), "—"]]
+        else:
+            for item in countries:
+                name = item.get("country") or item.get("country_code") or self.t("unknown")
+                rows.append([str(name), str(item.get("peers", 0))])
+        update_table(self.country_table, rows)
 
     def _fill_endpoints(self, endpoints: list[dict[str, Any]]) -> None:
-        rows = endpoints[:10]
-        self.endpoint_table.setRowCount(len(rows))
-        for row, item in enumerate(rows):
+        rows: list[list[str]] = []
+        for item in endpoints[:10]:
             location = ", ".join(
-                str(value) for value in (item.get("city"), item.get("country")) if value
+                str(value) for value in (item.get("city"), item.get("region"), item.get("country"))
+                if value
             ) or self.t("unknown")
-            self.endpoint_table.setItem(row, 0, QTableWidgetItem(str(item["ip"])))
-            self.endpoint_table.setItem(row, 1, QTableWidgetItem(location))
-            self.endpoint_table.setItem(row, 2, QTableWidgetItem(str(item["protocol"])))
+            asn = item.get("asn")
+            organization = item.get("organization") or item.get("isp")
+            if asn and organization:
+                provider = f"AS{asn} · {organization}"
+            elif asn:
+                provider = f"AS{asn}"
+            else:
+                provider = str(organization or "—")
+            rows.append([
+                str(item["ip"]),
+                provider,
+                location,
+                str(item["protocol"]),
+            ])
+        update_table(self.endpoint_table, rows)
 
     def closeEvent(self, event: Any) -> None:
         if self.worker.isRunning() and not self.worker.stop():
-            QMessageBox.warning(
-                self,
-                self.t("stopping_title"),
-                self.t("stopping_message"),
-            )
+            QMessageBox.warning(self, self.t("stopping_title"), self.t("stopping_message"))
             event.ignore()
             return
         event.accept()
