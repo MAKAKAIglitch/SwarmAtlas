@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from swarmatlas import config
 from swarmatlas.theme import get_palette
-from swarmatlas.ui import GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, WorldMap
+from swarmatlas.ui import GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, TrafficChart, WorldMap
 
 
 def test_main_window_exposes_system_theme_language_and_region_views(
@@ -281,4 +281,56 @@ def test_world_map_reuses_static_background_during_hover_and_marker_updates(
     assert draw_counts == {"land": 2, "tiles": 2, "boundaries": 2}
 
     widget.deleteLater()
+    app.processEvents()
+
+
+
+def test_world_map_skips_signature_rebuild_for_same_snapshot_object(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    widget = WorldMap(get_palette("dark"), "No map data")
+    endpoint = {
+        "ip": "8.8.8.8",
+        "latitude": 37.4,
+        "longitude": -122.0,
+        "country": "United States",
+    }
+    snapshot = [endpoint]
+    widget.set_locations(snapshot)
+
+    monkeypatch.setattr(
+        widget,
+        "_normalized_point",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("unchanged snapshot should not rebuild marker signatures")
+        ),
+    )
+    updates: list[bool] = []
+    widget.update = lambda *_args: updates.append(True)
+
+    widget.set_locations(snapshot)
+
+    assert widget._location_source is snapshot
+    assert updates == []
+    widget.deleteLater()
+    app.processEvents()
+
+
+def test_traffic_chart_skips_copying_the_same_history_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    chart = TrafficChart(get_palette("dark"), "No history")
+    samples = [{"upload_bps": 10.0, "download_bps": 20.0}]
+    chart.set_samples(samples)
+    previous_upload = chart.upload
+    previous_download = chart.download
+
+    chart.set_samples(samples)
+
+    assert chart.upload is previous_upload
+    assert chart.download is previous_download
+    chart.deleteLater()
     app.processEvents()
