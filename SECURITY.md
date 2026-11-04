@@ -39,9 +39,9 @@ Online GeoIP is opt-in and sends the selected public destination IP to exactly o
 - IPinfo Lite (requires a token);
 - 2ip.io (requires a token).
 
-The provider terms, quotas, and transport security differ. IP-API's free endpoint is HTTP and does not provide HTTPS transport. Users should check the provider's current terms before selecting a service. Private, loopback and link-local addresses are filtered out before remote lookups. Lookups run in a background thread with an in-memory cache and provider-specific request throttling. The application keeps daily request counters locally for free-tier budget protection.
+The provider terms, quotas, and transport security differ. IP-API's free endpoint is HTTP and does not provide HTTPS transport. Users should check the provider's current terms before selecting a service. Private, loopback and link-local addresses are filtered out before remote lookups. Lookups run in a background thread with an in-memory cache and provider-specific request throttling. The application keeps conservative daily and monthly request counters locally per installation for free-tier budget protection. Other applications or devices sharing the same public IP or API key may also consume the provider's quota.
 
-Online provider API keys are saved in the local settings file. They are not encrypted by SwarmAtlas. A user who can read that settings file can read the key. Do not publish settings.json or application logs.
+Online provider API keys are stored separately for each provider in the local settings file. They are not encrypted by SwarmAtlas. A token for one provider is not reused for another. A user who can read that settings file can read the key. Do not publish settings.json or application logs.
 
 The monitor itself does not bind/listen on a port, create tunnels, change firewall settings, or capture payloads. Package installation and updater operations contact their configured package/GitHub sources only when setup or update is explicitly run. The Windows launcher downloads a published Rust wheel only from the project's GitHub release, validates the SHA-256 against the release manifest, then installs the local wheel. If that fails, it leaves the Python fallback available.
 
