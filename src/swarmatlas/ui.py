@@ -421,6 +421,9 @@ class WorldMap(QWidget):
         self._location_source: list[dict[str, Any]] | None = None
         self._location_signature: tuple[tuple[Any, ...], ...] | None = None
         self._location_world_points: list[QPointF] = []
+        self._location_grid: dict[tuple[int, int], list[int]] = {}
+        self._location_grid_key: tuple[float, int] | None = None
+        self._location_grid_cell_size = 1.0
         self.country_path = QPainterPath()
         self.region_path = QPainterPath()
         self._has_boundaries = False
@@ -492,6 +495,8 @@ class WorldMap(QWidget):
             self._normalized_point(float(item["longitude"]), float(item["latitude"]))
             for item in valid
         ]
+        self._location_grid = {}
+        self._location_grid_key = None
         self._hovered_index = None
         self.update()
 
@@ -744,20 +749,62 @@ class WorldMap(QWidget):
         painter.drawPath(self.region_path)
         painter.restore()
 
+    def _ensure_location_grid(self, map_rect: QRectF) -> float:
+        """Build a screen-scale spatial hash so hover checks inspect nearby markers only."""
+        world_size = map_rect.width() * self._zoom
+        if world_size <= 0.0:
+            return 1.0
+
+        # A bucket is one 13-pixel hover radius wide. Only the pointer's
+        # current bucket and its eight neighbours can contain a hit.
+        cell_size = 13.0 / world_size
+        key = (round(world_size, 4), len(self._location_world_points))
+        if key != self._location_grid_key:
+            inverse_cell_size = 1.0 / cell_size
+            grid: dict[tuple[int, int], list[int]] = {}
+            for index, point in enumerate(self._location_world_points):
+                cell = (
+                    math.floor(point.x() * inverse_cell_size),
+                    math.floor(point.y() * inverse_cell_size),
+                )
+                grid.setdefault(cell, []).append(index)
+            self._location_grid = grid
+            self._location_grid_key = key
+            self._location_grid_cell_size = cell_size
+        return world_size
+
     def _nearest_location(self, position: QPointF) -> int | None:
-        if not self._map_rect().contains(position):
+        map_rect = self._map_rect()
+        if not map_rect.contains(position) or not self._location_world_points:
             return None
+
+        world_size = self._ensure_location_grid(map_rect)
+        if world_size <= 0.0:
+            return None
+
+        center = map_rect.center()
+        mouse_x = (
+            position.x() - center.x() - self._pan.x()
+        ) / world_size + 0.5
+        mouse_y = (
+            position.y() - center.y() - self._pan.y()
+        ) / world_size + 0.5
+        cell_size = self._location_grid_cell_size
+        cell_x = math.floor(mouse_x / cell_size)
+        cell_y = math.floor(mouse_y / cell_size)
         nearest_index: int | None = None
         nearest_distance_squared = 13.0 * 13.0
-        map_rect = self._map_rect()
-        for index, normalized in enumerate(self._location_world_points):
-            point = self._screen_point_from_normalized(normalized, map_rect)
-            dx = point.x() - position.x()
-            dy = point.y() - position.y()
-            distance_squared = dx * dx + dy * dy
-            if distance_squared < nearest_distance_squared:
-                nearest_index = index
-                nearest_distance_squared = distance_squared
+
+        for y in range(cell_y - 1, cell_y + 2):
+            for x in range(cell_x - 1, cell_x + 2):
+                for index in self._location_grid.get((x, y), ()):
+                    point = self._location_world_points[index]
+                    dx = (point.x() - mouse_x) * world_size
+                    dy = (point.y() - mouse_y) * world_size
+                    distance_squared = dx * dx + dy * dy
+                    if distance_squared < nearest_distance_squared:
+                        nearest_index = index
+                        nearest_distance_squared = distance_squared
         return nearest_index
 
     @staticmethod
