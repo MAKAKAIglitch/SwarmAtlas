@@ -59,3 +59,94 @@ def test_store_persists_asn_and_organization_details(tmp_path: Path) -> None:
     assert endpoint["asn"] == 15169
     assert endpoint["organization"] == "Google LLC"
     store.close()
+
+
+
+def test_same_destination_is_kept_separately_for_each_process(tmp_path: Path) -> None:
+    store = Store(tmp_path / "processes.sqlite3")
+    store.update_destinations(
+        [
+            {
+                "ip": "8.8.8.8",
+                "port": 443,
+                "protocol": "TCP",
+                "process_id": 101,
+                "process_name": "client-a.exe",
+                "local_port": 51001,
+            },
+            {
+                "ip": "8.8.8.8",
+                "port": 443,
+                "protocol": "TCP",
+                "process_id": 202,
+                "process_name": "client-b.exe",
+                "local_port": 51002,
+            },
+        ],
+        timestamp=100.0,
+    )
+
+    endpoints = store.summary("Ethernet", now=100.0)["active_endpoints"]
+    assert len(endpoints) == 2
+    owners = {(item["process_id"], item["process_name"]) for item in endpoints}
+    assert owners == {(101, "client-a.exe"), (202, "client-b.exe")}
+    store.close()
+
+
+def test_legacy_destination_schema_migrates_without_losing_history(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "legacy.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE destinations (
+            ip TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            protocol TEXT NOT NULL,
+            first_seen REAL NOT NULL,
+            last_seen REAL NOT NULL,
+            country_code TEXT,
+            country TEXT,
+            region TEXT,
+            city TEXT,
+            asn INTEGER,
+            organization TEXT,
+            isp TEXT,
+            latitude REAL,
+            longitude REAL,
+            active INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (ip, port, protocol)
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO destinations (
+            ip, port, protocol, first_seen, last_seen, country, active
+        ) VALUES ('8.8.8.8', 443, 'TCP', 10, 10, 'United States', 1)
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = Store(path)
+    migrated = store.summary("Ethernet", now=10.0)["active_endpoints"]
+    assert len(migrated) == 1
+    assert migrated[0]["ip"] == "8.8.8.8"
+    assert migrated[0]["process_id"] == 0
+
+    store.update_destinations(
+        [{
+            "ip": "8.8.8.8",
+            "port": 443,
+            "protocol": "TCP",
+            "process_id": 101,
+            "local_port": 51001,
+        }],
+        timestamp=11.0,
+    )
+    updated = store.summary("Ethernet", now=11.0)["active_endpoints"]
+    assert len(updated) == 1
+    assert updated[0]["process_id"] == 101
+    store.close()
