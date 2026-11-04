@@ -34,9 +34,14 @@ def test_main_window_exposes_system_theme_language_and_region_views(
     app.processEvents()
 
 
-def test_world_map_zoom_controls_and_vector_boundaries_render_offscreen() -> None:
+def test_world_map_zoom_controls_and_vector_boundaries_render_offscreen(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
     app = QApplication.instance() or QApplication([])
     widget = WorldMap(get_palette("dark"), "No local GeoIP data")
+    # Rendering tests stay deterministic and do not contact the public tile server.
+    monkeypatch.setattr(widget, "_request_tile", lambda *_args: None)
     widget.resize(640, 320)
     country = [[(-20, 20), (20, 20), (20, -20), (-20, -20), (-20, 20)]]
     region = [[(-10, 10), (10, 10), (10, -10), (-10, -10), (-10, 10)]]
@@ -97,6 +102,7 @@ def test_osm_world_map_uses_web_mercator_and_caps_at_city_region_zoom(
 
 def test_map_attribution_includes_openstreetmap_contributors(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
     app = QApplication.instance() or QApplication([])
     window = MainWindow()
 
