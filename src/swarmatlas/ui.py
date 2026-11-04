@@ -578,13 +578,15 @@ class MainWindow(QMainWindow):
         peers_layout.setContentsMargins(18, 16, 18, 12)
         self.endpoints_title = make_label(self.t("recent_destinations"), 13, self.palette["text"], 600)
         peers_layout.addWidget(self.endpoints_title)
-        self.endpoint_table = QTableWidget(0, 4)
+        self.endpoint_table = QTableWidget(0, 5)
         self.endpoint_table.setHorizontalHeaderLabels([
-            self.t("ip_address"), self.t("provider"), self.t("location"), self.t("type")
+            self.t("ip_address"), self.t("process"), self.t("provider"),
+            self.t("location"), self.t("type")
         ])
         self.endpoint_table.setColumnWidth(0, 112)
-        self.endpoint_table.setColumnWidth(1, 150)
-        self.endpoint_table.setColumnWidth(2, 120)
+        self.endpoint_table.setColumnWidth(1, 138)
+        self.endpoint_table.setColumnWidth(2, 145)
+        self.endpoint_table.setColumnWidth(3, 120)
         self.endpoint_table.horizontalHeader().setStretchLastSection(True)
         self.endpoint_table.verticalHeader().setVisible(False)
         self.endpoint_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -715,8 +717,17 @@ class MainWindow(QMainWindow):
                 provider = f"AS{asn}"
             else:
                 provider = str(organization or "—")
+            process_id = item.get("process_id")
+            process_name = item.get("process_name")
+            if process_name and process_id:
+                process = f"{process_name} · {process_id}"
+            elif process_id:
+                process = f"PID {process_id}"
+            else:
+                process = "—"
             rows.append([
                 str(item["ip"]),
+                process,
                 provider,
                 location,
                 str(item["protocol"]),
