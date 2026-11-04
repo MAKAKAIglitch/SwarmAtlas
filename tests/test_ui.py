@@ -230,3 +230,55 @@ def test_main_window_installs_prebuilt_map_paths_without_rebuilding_them(
     window.close()
     window.deleteLater()
     app.processEvents()
+
+
+
+def test_world_map_reuses_static_background_during_hover_and_marker_updates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    widget = WorldMap(get_palette("dark"), "No map data")
+    widget.resize(640, 320)
+    monkeypatch.setattr(widget, "_request_tile", lambda *_args: None)
+
+    draw_counts = {"land": 0, "tiles": 0, "boundaries": 0}
+    monkeypatch.setattr(
+        widget, "_draw_fallback_land",
+        lambda *_args: draw_counts.__setitem__("land", draw_counts["land"] + 1),
+    )
+    monkeypatch.setattr(
+        widget, "_draw_osm_tiles",
+        lambda *_args: draw_counts.__setitem__("tiles", draw_counts["tiles"] + 1),
+    )
+    monkeypatch.setattr(
+        widget, "_draw_administrative_boundaries",
+        lambda *_args: draw_counts.__setitem__("boundaries", draw_counts["boundaries"] + 1),
+    )
+
+    def render() -> None:
+        pixmap = QPixmap(widget.size())
+        widget.render(pixmap)
+        assert not pixmap.isNull()
+
+    render()
+    assert draw_counts == {"land": 1, "tiles": 1, "boundaries": 1}
+
+    widget.set_locations([{
+        "ip": "8.8.8.8",
+        "latitude": 37.4,
+        "longitude": -122.0,
+        "country": "United States",
+    }])
+    render()
+    widget._hovered_index = 0
+    widget.update()
+    render()
+    assert draw_counts == {"land": 1, "tiles": 1, "boundaries": 1}
+
+    widget.zoom_in()
+    render()
+    assert draw_counts == {"land": 2, "tiles": 2, "boundaries": 2}
+
+    widget.deleteLater()
+    app.processEvents()
