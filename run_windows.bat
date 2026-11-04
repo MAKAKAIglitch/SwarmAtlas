@@ -21,7 +21,7 @@ if not "%RUN_EXIT%"=="0" (
 ) else (
     echo [SwarmAtlas] Application has closed.
 )
-echo Logs are stored in %%LOCALAPPDATA%%\SwarmAtlas\logs
+echo Logs are stored in %LOCALAPPDATA%\SwarmAtlas\logs
 echo.
 pause
 exit /b %RUN_EXIT%
