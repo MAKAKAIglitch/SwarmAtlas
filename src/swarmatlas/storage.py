@@ -9,6 +9,29 @@ from typing import Any
 
 DESTINATION_RETENTION_SEC = 30 * 24 * 60 * 60
 
+DESTINATION_COLUMNS = (
+    "ip",
+    "port",
+    "protocol",
+    "process_id",
+    "local_port",
+    "process_name",
+    "connection_state",
+    "first_seen",
+    "last_seen",
+    "country_code",
+    "country",
+    "region",
+    "city",
+    "asn",
+    "organization",
+    "isp",
+    "latitude",
+    "longitude",
+    "active",
+)
+DESTINATION_PRIMARY_KEY = ["ip", "port", "protocol", "process_id", "local_port"]
+
 
 class Store:
     """Small local SQLite store. One instance is owned by the collector thread."""
@@ -24,7 +47,7 @@ class Store:
         self._create_schema()
 
     def _create_schema(self) -> None:
-        with self._db:
+        with self._lock, self._db:
             self._db.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS interface_state (
@@ -49,6 +72,10 @@ class Store:
                     ip TEXT NOT NULL,
                     port INTEGER NOT NULL,
                     protocol TEXT NOT NULL,
+                    process_id INTEGER NOT NULL DEFAULT 0,
+                    local_port INTEGER NOT NULL DEFAULT 0,
+                    process_name TEXT,
+                    connection_state TEXT,
                     first_seen REAL NOT NULL,
                     last_seen REAL NOT NULL,
                     country_code TEXT,
@@ -61,18 +88,83 @@ class Store:
                     latitude REAL,
                     longitude REAL,
                     active INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (ip, port, protocol)
+                    PRIMARY KEY (ip, port, protocol, process_id, local_port)
                 );
-                CREATE INDEX IF NOT EXISTS idx_destinations_last_seen
-                    ON destinations(last_seen);
                 """
             )
-            existing = {
-                str(row[1]) for row in self._db.execute("PRAGMA table_info(destinations)")
-            }
-            for column, definition in (("asn", "INTEGER"), ("organization", "TEXT"), ("isp", "TEXT")):
-                if column not in existing:
-                    self._db.execute(f"ALTER TABLE destinations ADD COLUMN {column} {definition}")
+            self._migrate_destinations()
+            self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_destinations_last_seen ON destinations(last_seen)"
+            )
+
+    def _migrate_destinations(self) -> None:
+        info = list(self._db.execute("PRAGMA table_info(destinations)"))
+        existing = {str(row[1]) for row in info}
+        primary_key = [
+            str(row[1])
+            for row in sorted((row for row in info if int(row[5]) > 0), key=lambda row: int(row[5]))
+        ]
+        if existing >= set(DESTINATION_COLUMNS) and primary_key == DESTINATION_PRIMARY_KEY:
+            return
+
+        defaults = {
+            "process_id": "0",
+            "local_port": "0",
+            "process_name": "NULL",
+            "connection_state": "NULL",
+            "asn": "NULL",
+            "organization": "NULL",
+            "isp": "NULL",
+        }
+        select_expressions: list[str] = []
+        for column in DESTINATION_COLUMNS:
+            if column in existing:
+                if column in {"process_id", "local_port"}:
+                    select_expressions.append(f"COALESCE({column}, 0)")
+                else:
+                    select_expressions.append(column)
+            elif column in defaults:
+                select_expressions.append(defaults[column])
+            else:
+                raise sqlite3.DatabaseError(
+                    f"Cannot migrate destinations: required legacy column '{column}' is missing"
+                )
+
+        self._db.execute("DROP TABLE IF EXISTS destinations_migration")
+        self._db.execute(
+            """
+            CREATE TABLE destinations_migration (
+                ip TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                protocol TEXT NOT NULL,
+                process_id INTEGER NOT NULL DEFAULT 0,
+                local_port INTEGER NOT NULL DEFAULT 0,
+                process_name TEXT,
+                connection_state TEXT,
+                first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                country_code TEXT,
+                country TEXT,
+                region TEXT,
+                city TEXT,
+                asn INTEGER,
+                organization TEXT,
+                isp TEXT,
+                latitude REAL,
+                longitude REAL,
+                active INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (ip, port, protocol, process_id, local_port)
+            )
+            """
+        )
+        columns_sql = ", ".join(DESTINATION_COLUMNS)
+        expressions_sql = ", ".join(select_expressions)
+        self._db.execute(
+            f"INSERT INTO destinations_migration ({columns_sql}) "
+            f"SELECT {expressions_sql} FROM destinations"
+        )
+        self._db.execute("DROP TABLE destinations")
+        self._db.execute("ALTER TABLE destinations_migration RENAME TO destinations")
 
     def record_interface(
         self, interface: str, sent: int, received: int, timestamp: float | None = None
@@ -143,12 +235,14 @@ class Store:
                 self._db.execute(
                     """
                     INSERT INTO destinations (
-                        ip, port, protocol, first_seen, last_seen, country_code,
-                        country, region, city, asn, organization, isp,
-                        latitude, longitude, active
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                    ON CONFLICT(ip, port, protocol) DO UPDATE SET
+                        ip, port, protocol, process_id, local_port, process_name,
+                        connection_state, first_seen, last_seen, country_code, country,
+                        region, city, asn, organization, isp, latitude, longitude, active
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    ON CONFLICT(ip, port, protocol, process_id, local_port) DO UPDATE SET
                         last_seen = excluded.last_seen,
+                        process_name = COALESCE(excluded.process_name, destinations.process_name),
+                        connection_state = COALESCE(excluded.connection_state, destinations.connection_state),
                         country_code = COALESCE(excluded.country_code, destinations.country_code),
                         country = COALESCE(excluded.country, destinations.country),
                         region = COALESCE(excluded.region, destinations.region),
@@ -161,10 +255,24 @@ class Store:
                         active = 1
                     """,
                     (
-                        item["ip"], item["port"], item["protocol"], timestamp, timestamp,
-                        item.get("country_code"), item.get("country"), item.get("region"),
-                        item.get("city"), item.get("asn"), item.get("organization"),
-                        item.get("isp"), item.get("latitude"), item.get("longitude"),
+                        item["ip"],
+                        item["port"],
+                        item["protocol"],
+                        int(item.get("process_id") or 0),
+                        int(item.get("local_port") or 0),
+                        item.get("process_name"),
+                        item.get("connection_state"),
+                        timestamp,
+                        timestamp,
+                        item.get("country_code"),
+                        item.get("country"),
+                        item.get("region"),
+                        item.get("city"),
+                        item.get("asn"),
+                        item.get("organization"),
+                        item.get("isp"),
+                        item.get("latitude"),
+                        item.get("longitude"),
                     ),
                 )
 
@@ -178,7 +286,8 @@ class Store:
             totals = dict(state) if state else {"upload_total": 0, "download_total": 0}
             destinations = self._db.execute(
                 """
-                SELECT ip, port, protocol, country_code, country, region, city,
+                SELECT ip, port, protocol, process_id, local_port, process_name,
+                       connection_state, country_code, country, region, city,
                        asn, organization, isp, latitude, longitude, last_seen
                 FROM destinations
                 WHERE active = 1 AND last_seen >= ?
