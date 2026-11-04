@@ -431,12 +431,26 @@ class Store:
             totals = dict(state) if state else {"upload_total": 0, "download_total": 0}
             destinations = self._db.execute(
                 """
-                SELECT ip, port, protocol, process_id, local_port, process_name,
-                       connection_state, country_code, country, region, city,
-                       asn, organization, isp, latitude, longitude, last_seen
-                FROM destinations
-                WHERE last_seen >= ?
-                ORDER BY last_seen DESC
+                SELECT recent.ip, recent.port, recent.protocol, recent.process_id,
+                       recent.local_port, recent.process_name, recent.connection_state,
+                       recent.country_code, recent.country, recent.region, recent.city,
+                       recent.asn, recent.organization, recent.isp, recent.latitude,
+                       recent.longitude, recent.last_seen
+                FROM destinations AS recent
+                WHERE recent.last_seen >= ?
+                  AND NOT (
+                      recent.process_id = 0
+                      AND EXISTS (
+                          SELECT 1
+                          FROM destinations AS owned
+                          WHERE owned.ip = recent.ip
+                            AND owned.port = recent.port
+                            AND owned.protocol = recent.protocol
+                            AND owned.process_id <> 0
+                            AND owned.last_seen >= recent.last_seen
+                      )
+                  )
+                ORDER BY recent.last_seen DESC
                 LIMIT 1000
                 """,
                 (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
