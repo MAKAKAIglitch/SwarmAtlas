@@ -4,7 +4,6 @@ import ipaddress
 from typing import Any
 
 
-NATIVE_TCP_SCAN_LIMIT = 50_000
 NATIVE_UDP_SCAN_LIMIT = 50_000
 
 _native = None
@@ -52,7 +51,9 @@ def list_tcp_connections(limit: int = 2000) -> list[dict[str, Any]]:
     if _native is None:
         raise RuntimeError("The optional Rust extension is not installed")
     max_results = max(1, min(int(limit), 100_000))
-    rows = _native.list_tcp_connections(NATIVE_TCP_SCAN_LIMIT)
+    # Rust scans the bounded Windows table, filters non-public addresses there,
+    # and only materializes the requested number of endpoints across the PyO3 boundary.
+    rows = _native.list_tcp_connections(max_results)
     result: list[dict[str, Any]] = []
 
     for row in rows:
