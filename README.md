@@ -132,6 +132,7 @@ Close SwarmAtlas and double-click `update_project.bat` in the project folder.
 - In a ZIP-extracted folder, it downloads the latest `main` archive from GitHub and safely overlays project files.
 - The updater preserves `.venv`, local MMDB files, SQLite databases, logs, and files outside the repository.
 - If a virtual environment already exists, it refreshes the editable package and optional GeoIP dependency.
+- If the Rust extension is already installed and the Rust toolchain is available, it also rebuilds the native extension. If the toolchain is missing, it preserves the existing binary and reports that it was not rebuilt.
 - It does not silently stash, reset, or rewrite local Git commits.
 
 An internet connection is required. After a successful update, start the app with `run_windows.bat`.
