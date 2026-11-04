@@ -51,7 +51,26 @@ def simplify_projected_ring(
     if len(points) <= 2 or tolerance <= 0:
         return list(points)
 
-    threshold = tolerance * tolerance
+    # A cheap linear radial pass removes dense, nearly coincident shapefile
+    # vertices before Douglas-Peucker. The smaller pre-filter tolerance keeps
+    # the combined visual error below the configured simplification tolerance.
+    radial_tolerance = tolerance * 0.25
+    radial_threshold = radial_tolerance * radial_tolerance
+    radial = [points[0]]
+    last = points[0]
+    for point in points[1:-1]:
+        dx = point[0] - last[0]
+        dy = point[1] - last[1]
+        if dx * dx + dy * dy >= radial_threshold:
+            radial.append(point)
+            last = point
+    if points[-1] != radial[-1]:
+        radial.append(points[-1])
+    if len(radial) <= 2:
+        return radial
+
+    points = radial
+    threshold = (tolerance * 0.75) ** 2
     keep = bytearray(len(points))
     keep[0] = 1
     keep[-1] = 1
