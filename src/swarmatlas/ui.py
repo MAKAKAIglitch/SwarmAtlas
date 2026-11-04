@@ -1244,6 +1244,7 @@ class MainWindow(QMainWindow):
             "ipdata": ("ipdata.co", "https://ipdata.co"),
             "ipapi-is": ("ipapi.is", "https://ipapi.is"),
             "ipinfo-lite": ("IPinfo Lite", "https://ipinfo.io/lite"),
+            "ip2location": ("IP2Location.io", "https://www.ip2location.io"),
             "2ip": ("2ip.io", "https://2ip.io"),
         }
         name, url = sources.get(self.config.geoip_provider, sources["dbip"])
