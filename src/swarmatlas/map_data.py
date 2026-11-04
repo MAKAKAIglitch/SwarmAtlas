@@ -142,11 +142,11 @@ def _split_antimeridian(points: list[tuple[float, float]]) -> list[list[tuple[fl
             continue
         point = (float(longitude), float(latitude))
         if current and abs(point[0] - current[-1][0]) > 180.0:
-            if len(current) >= 3:
+            if len(current) >= 2:
                 segments.append(current)
             current = []
         current.append(point)
-    if len(current) >= 3:
+    if len(current) >= 2:
         segments.append(current)
     return segments
 

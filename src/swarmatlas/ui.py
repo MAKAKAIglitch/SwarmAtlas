@@ -279,6 +279,7 @@ class WorldMap(QWidget):
                 continue
             valid.append(item)
         self.locations = valid
+        self._hovered_index = None
         self.update()
 
     @staticmethod
@@ -302,7 +303,7 @@ class WorldMap(QWidget):
 
         region_path = QPainterPath()
         for ring in regions:
-            if len(ring) < 3:
+            if len(ring) < 2:
                 continue
             region_path.moveTo(self._normalized_point(*ring[0]))
             for longitude, latitude in ring[1:]:
@@ -841,6 +842,13 @@ class MainWindow(QMainWindow):
         map_layout.addLayout(map_heading)
         self.world_map = WorldMap(self.palette, self.t("map_empty"))
         map_layout.addWidget(self.world_map)
+        self.map_attribution_label = QLabel(self._map_attribution_html())
+        self.map_attribution_label.setTextFormat(Qt.TextFormat.RichText)
+        self.map_attribution_label.setOpenExternalLinks(True)
+        self.map_attribution_label.setStyleSheet(
+            f"color: {self.palette['muted']}; background: transparent;"
+        )
+        map_layout.addWidget(self.map_attribution_label)
         middle.addWidget(map_card, 7)
 
         countries_card = card()
@@ -1003,8 +1011,8 @@ class MainWindow(QMainWindow):
                 self._saved_region_path,
             )
 
-    def open_map_dialog(self) -> None:
-        attribution = (
+    def _map_attribution_html(self) -> str:
+        return (
             self.t("map_attribution")
             .replace("DB-IP.com", '<a href="https://db-ip.com">DB-IP.com</a>')
             .replace(
@@ -1012,6 +1020,9 @@ class MainWindow(QMainWindow):
                 '<a href="https://www.naturalearthdata.com/">Natural Earth</a>',
             )
         )
+
+    def open_map_dialog(self) -> None:
+        attribution = self._map_attribution_html()
         if self._map_dialog is None:
             self._map_dialog = WorldMapDialog(
                 self.world_map,

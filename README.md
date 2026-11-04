@@ -156,19 +156,13 @@ An internet connection is required. The updater contacts GitHub only after you r
 
 ## GeoIP setup
 
-On first launch, SwarmAtlas downloads the DB-IP Lite City MMDB and the Natural Earth country/region boundaries. The database includes country, first-level region, city and approximate coordinates; it is cached locally, verified, and checked for a refresh when older than 30 days. The map supports wheel zoom, drag panning and an enlarged view. Country and region tables count observed public endpoints, not traffic volume.
+On first launch, SwarmAtlas downloads the DB-IP Lite City MMDB and the Natural Earth country/region boundaries. The database includes country, first-level region, city and approximate coordinates. It is cached locally, verified against the published SHA-1 checksum, and checked for a refresh when it is older than 30 days. A valid local copy remains usable if a refresh cannot be downloaded.
 
-DB-IP Lite is licensed under CC BY 4.0 and attribution is shown in the map. Natural Earth boundaries are public-domain data. Peer IP addresses are never sent to either source; only static reference files are downloaded.
+The map supports mouse-wheel zoom, click-and-drag panning, zoom controls and an enlarged view. Country and region tables summarize active public endpoints, not traffic volume. Marker locations are approximate IP geolocation results; they do not identify the physical position of a device.
 
+DB-IP Lite is licensed under CC BY 4.0 and is attributed in the map view. Natural Earth boundary data is public domain. Peer IP addresses are never sent to either source; only static reference files are downloaded. The GeoIP reader works against local MMDB files after setup.
 
-
-Open **GeoIP database** in the left sidebar and add one or more local `.mmdb` files. City, Country, ASN, and ISP database types can be combined. ASN/ISP details are shown in the recent-destinations table.
-
-The selected databases are read locally. IP addresses are not sent to a remote geolocation provider. The reader files are opened and warmed in the background during cold start; SwarmAtlas does not copy entire databases into RAM.
-
-The official 2ip.io documentation currently describes an online JSON geolocation API that requires a token, rather than a downloadable local MMDB database. Using that API would send each queried peer IP to 2ip and is rate-limited, so it is not enabled in this local-first build.
-
-IP geolocation is approximate. It generally indicates an ISP's registered or egress area, not a person's exact location.
+Open **GeoIP database** in the left sidebar to view the automatically managed database or add other local `.mmdb` files. City, Country, ASN and ISP databases can be combined. ASN/ISP details are shown in the recent-destinations table.
 
 ## Local data and privacy
 

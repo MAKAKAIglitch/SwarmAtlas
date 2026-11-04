@@ -28,4 +28,4 @@ def test_map_ring_is_split_at_antimeridian() -> None:
         (170, 10), (175, 12), (179, 15), (-179, 15), (-175, 12), (-170, 10), (-170, -10)
     ])
     assert len(segments) == 2
-    assert all(len(segment) >= 3 for segment in segments)
+    assert all(len(segment) >= 2 for segment in segments)
