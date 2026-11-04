@@ -40,7 +40,7 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 | One-click project updater | Implemented |
 | World map with approximate endpoint locations | Implemented when GeoIP is configured |
 | Per-destination / per-country byte totals | Not implemented |
-| Russian and English interface | Implemented (Russian by default) |
+| Russian and English interface | Implemented (system language by default) |
 | Dark and light themes | Implemented; preference saved locally |
 | Torrent-client integrations | Planned |
 
