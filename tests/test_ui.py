@@ -5,7 +5,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPainterPath, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from swarmatlas import config
@@ -205,4 +205,28 @@ def test_world_map_skips_repaint_for_identical_endpoint_snapshots(
     assert widget._hovered_index is None
 
     widget.deleteLater()
+    app.processEvents()
+
+
+
+def test_main_window_installs_prebuilt_map_paths_without_rebuilding_them(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    countries = QPainterPath()
+    countries.addRect(0.1, 0.1, 0.3, 0.3)
+    regions = QPainterPath()
+    regions.addRect(0.2, 0.2, 0.1, 0.1)
+
+    window._set_map_boundaries(countries, regions)
+
+    assert window.world_map._has_boundaries
+    assert window.world_map.country_path.elementCount() == countries.elementCount()
+    assert window.world_map.region_path.elementCount() == regions.elementCount()
+
+    window.close()
+    window.deleteLater()
     app.processEvents()
