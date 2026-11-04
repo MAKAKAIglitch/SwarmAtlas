@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Iterator
 
 from urllib.request import Request, urlopen
 
@@ -137,7 +137,7 @@ def _iter_split_antimeridian(
     points: list[tuple[float, float]],
     start: int,
     end: int,
-):
+) -> Iterator[list[tuple[float, float]]]:
     """Yield one valid ring segment without copying the full shapefile part."""
     current: list[tuple[float, float]] = []
     previous_longitude: float | None = None
@@ -162,7 +162,7 @@ def _split_antimeridian(points: list[tuple[float, float]]) -> list[list[tuple[fl
     return list(_iter_split_antimeridian(points, 0, len(points)))
 
 
-def iter_polygon_rings(shapefile_path: Path):
+def iter_polygon_rings(shapefile_path: Path) -> Iterator[list[tuple[float, float]]]:
     """Stream one polygon ring at a time instead of holding a whole dataset in RAM."""
     import shapefile
 
@@ -191,6 +191,7 @@ def iter_polygon_rings(shapefile_path: Path):
 def read_polygon_rings(shapefile_path: Path) -> list[list[tuple[float, float]]]:
     """Read polygon rings with pyshp; no GIS runtime or network service is needed."""
     return list(iter_polygon_rings(shapefile_path))
+
 
 def load_world_boundary_paths(
     progress: Callable[[str], None] | None = None,
