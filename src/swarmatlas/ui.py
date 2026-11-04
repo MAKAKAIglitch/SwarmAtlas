@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
@@ -326,13 +326,17 @@ class MainWindow(QMainWindow):
         self.worker = NetworkWorker(self.config)
         self.worker.snapshot_ready.connect(self.update_snapshot)
         self.worker.status_changed.connect(self.update_geo_status)
-        self.worker.startup_ready.connect(self.initialization_ready)
+        self.worker.startup_ready.connect(self._on_worker_startup)
 
         self._build_ui()
         self._style_hints = QGuiApplication.styleHints()
         color_signal = getattr(self._style_hints, "colorSchemeChanged", None)
         if color_signal is not None:
             color_signal.connect(self._on_system_theme_changed)
+
+    @Slot(str)
+    def _on_worker_startup(self, status: str) -> None:
+        self.initialization_ready.emit(status)
 
     def t(self, key: str, **values: object) -> str:
         return tr(key, self.current_language, **values)
