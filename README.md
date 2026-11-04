@@ -114,24 +114,25 @@ The manual command does not run the Windows launcher or its automatic native-whe
 
     .\.venv\Scripts\python -m pip install -e ".[geoip,dev]"
     python -m pytest
-    python -m compileall run_windows.py update_project.py src
+    python -m compileall run_windows.py update_project.py src benchmarks
 
 ## Optional local Rust build
 
-The Python application, UI, localization, GeoIP orchestration, settings and SQLite store remain Python-side. The optional PyO3/Rust extension is split into platform and network modules:
+The Python application, UI, localization, GeoIP orchestration, settings and SQLite store remain Python-side. The optional PyO3/Rust extension is split into platform, network and geometry modules:
 
 - `native/src/platform/windows/api.rs` owns bounded Windows IP Helper table queries and port decoding.
 - `native/src/platform/windows/tcp.rs` and `udp.rs` decode the IPv4/IPv6 owner-PID table layouts separately.
 - `native/src/network/address.rs` canonicalizes IPv4-mapped IPv6 addresses and filters non-public/special-purpose destinations before Python objects are created.
-- `native/src/lib.rs` is only the PyO3 boundary; it releases the GIL while Windows tables are queried and decoded.
+- `native/src/geo/geometry.rs` performs Web Mercator projection, radial filtering and iterative Douglas-Peucker simplification in bounded batches, with the GIL released while the numeric core runs.
+- `native/src/lib.rs` is only the PyO3 boundary; it releases the GIL while Windows tables are queried and decoded and while map geometry is processed.
 
 For TCP, Rust scans a bounded OS-table prefix (up to 100,000 rows per address family), filters non-public addresses natively, and returns no more than the requested endpoint limit (2,000 in the dashboard). It visits the aligned Win32 buffer directly, so it does not allocate and copy a second vector of all raw rows. Python receives only usable public destinations and does not repeat the address classification for the current native capability.
 
 For UDP, Rust counts IPv4 and IPv6 owner-PID table rows without materializing per-socket Python tuples. The collector no longer reads the same Windows UDP binding table a second time through psutil. This count is deliberately distinct from remote UDP peers: Windows' owner-PID table contains local bindings and does not reveal arbitrary remote destinations.
 
-The collector also resolves process names in one cached process-table pass, performs at most one GeoIP lookup per unique IP in a scan, caches endpoint summaries between socket scans and refreshes history only when its sampling interval or selected range changes. SQLite destination updates are batched; the legacy `active` column is retained for migration compatibility but is not rewritten on each scan, and full history-cap counts are throttled to once per minute.
+Map geometry is sent to Rust in batches bounded by ring count and input vertex count. The Rust implementation preserves the Python algorithm's tolerance split and endpoint handling. Qt `QPainterPath` construction stays on the Python side because it is a Qt object boundary, not a worthwhile target for a language rewrite by itself. If the optional extension is unavailable, the original Python geometry implementation remains the compatibility fallback.
 
-Map polygon projection and simplification run on the collector thread. The map widget keeps a rasterized background/tiles/boundaries layer and redraws only markers during ordinary endpoint and hover updates; it invalidates the cached layer when the map view, style, boundaries or tiles change.
+Use `benchmarks/benchmark_map_geometry.py` to compare the Python reference against the installed native implementation. The benchmark uses deterministic synthetic rings, includes Python/Rust conversion overhead, does not contact the network, and reports median and p95 timings. Timing is machine- and dataset-dependent; run it on the same machine and build to determine whether the native path helps your map data.
 
 The prebuilt Rust extension is installed automatically by run_windows.bat when a verified release is available. To build locally instead, install Rust 1.85 or newer and the Windows MSVC linker/SDK, then run build_native.bat. The Python collector remains the fallback.
 
@@ -140,6 +141,7 @@ The prebuilt Rust extension is installed automatically by run_windows.bat when a
 - Theme: System, Dark or Light.
 - Language: System, Русский or English.
 - Network adapter: automatic selection or a specific active interface.
+- When the main window is minimized, the collector automatically switches to a lower-power background cadence: interface counters every 5 seconds, interface checks every 20 seconds and endpoint scans every 15 seconds. Restoring the window immediately returns to the normal 1-second / 5-second cadence. Ten-second history sampling remains enabled.
 - The live header shows upload and download rates separately.
 - Native Windows 11 Mica backdrop is supported on Windows 11 22H2+.
 

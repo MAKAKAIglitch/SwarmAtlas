@@ -32,6 +32,9 @@ _LOGGER = logging.getLogger(__name__)
 COUNTER_SAMPLE_INTERVAL_SEC = 1.0
 INTERFACE_CHECK_INTERVAL_SEC = 5.0
 ENDPOINT_SCAN_INTERVAL_SEC = 5.0
+POWER_SAVE_COUNTER_SAMPLE_INTERVAL_SEC = 5.0
+POWER_SAVE_INTERFACE_CHECK_INTERVAL_SEC = 20.0
+POWER_SAVE_ENDPOINT_SCAN_INTERVAL_SEC = 15.0
 HISTORY_SAMPLE_INTERVAL_SEC = 10.0
 MAX_TRACKED_ENDPOINTS = 2000
 PROCESS_NAME_CACHE_LIMIT = 4096
@@ -42,6 +45,26 @@ VIRTUAL_MARKERS = (
     "wintun", "wireguard", "zerotier", "tailscale", "tap-", "docker", "wsl",
 )
 _PROCESS_NAME_CACHE: dict[int, tuple[float, str | None]] = {}
+
+
+def should_use_power_saver(*, application_active: bool, minimized: bool) -> bool:
+    """Use the slower profile only while the application is outside the foreground."""
+    return minimized or not application_active
+
+
+def sampling_intervals(power_saver_enabled: bool) -> tuple[float, float, float]:
+    """Return counter, interface-check and endpoint-scan intervals for the current window state."""
+    if power_saver_enabled:
+        return (
+            POWER_SAVE_COUNTER_SAMPLE_INTERVAL_SEC,
+            POWER_SAVE_INTERFACE_CHECK_INTERVAL_SEC,
+            POWER_SAVE_ENDPOINT_SCAN_INTERVAL_SEC,
+        )
+    return (
+        COUNTER_SAMPLE_INTERVAL_SEC,
+        INTERFACE_CHECK_INTERVAL_SEC,
+        ENDPOINT_SCAN_INTERVAL_SEC,
+    )
 
 
 def available_interfaces() -> list[str]:
@@ -440,7 +463,9 @@ class NetworkWorker(QThread):
         self._requested_geoip_provider = config.geoip_provider
         self._requested_geoip_api_key = config.geoip_api_key
         self._history_range_seconds = 3600
+        self._power_saver_mode = False
         self._stop_event = threading.Event()
+        self._wake_event = threading.Event()
 
     def _resolve_interface(self, requested: str | None) -> str:
         """Resolve the selected adapter, falling back to automatic selection if unavailable."""
@@ -470,9 +495,18 @@ class NetworkWorker(QThread):
         with self._lock:
             self._history_range_seconds = max(60, min(int(seconds), 5 * 365 * 24 * 60 * 60))
 
+    def set_power_saver_mode(self, enabled: bool) -> None:
+        """Reduce background polling while the desktop window is minimized."""
+        with self._lock:
+            changed = self._power_saver_mode != bool(enabled)
+            self._power_saver_mode = bool(enabled)
+        if changed:
+            self._wake_event.set()
+
     def stop(self, timeout_ms: int = 10000) -> bool:
         """Request graceful shutdown; never forcibly terminate the worker."""
         self._stop_event.set()
+        self._wake_event.set()
         return self.wait(timeout_ms)
 
     def restart(self) -> None:
@@ -480,6 +514,7 @@ class NetworkWorker(QThread):
         if self.isRunning():
             return
         self._stop_event.clear()
+        self._wake_event.clear()
         self.start()
 
     def run(self) -> None:
@@ -583,6 +618,13 @@ class NetworkWorker(QThread):
                     requested_provider = self._requested_geoip_provider
                     requested_api_key = self._requested_geoip_api_key
                     history_range_seconds = self._history_range_seconds
+                    power_saver_mode = self._power_saver_mode
+
+                (
+                    counter_sample_interval,
+                    interface_check_interval,
+                    endpoint_scan_interval,
+                ) = sampling_intervals(power_saver_mode)
 
                 # Local DB-IP remains the private default. Remote lookup is only
                 # active after the user explicitly selects an online provider.
@@ -611,7 +653,7 @@ class NetworkWorker(QThread):
 
                 interface_request_changed = requested != last_interface_request
                 interface_check_due = (
-                    now_mono - last_interface_check >= INTERFACE_CHECK_INTERVAL_SEC
+                    now_mono - last_interface_check >= interface_check_interval
                 )
                 if interface_request_changed or interface_check_due:
                     try:
@@ -648,7 +690,7 @@ class NetworkWorker(QThread):
                     upload_rate = 0.0
                     download_rate = 0.0
 
-                if now_mono - last_endpoint_scan >= ENDPOINT_SCAN_INTERVAL_SEC:
+                if now_mono - last_endpoint_scan >= endpoint_scan_interval:
                     scan_started = time.perf_counter()
                     scanned_endpoint_count = 0
                     try:
@@ -670,7 +712,7 @@ class NetworkWorker(QThread):
                             f"(TCP: {tcp_count}, UDP destinations: {udp_count}); "
                             f"local UDP sockets: {udp_sockets}; "
                             f"{owner_count} with process owner "
-                            f"(scan every {ENDPOINT_SCAN_INTERVAL_SEC:g} s)"
+                            f"(scan every {endpoint_scan_interval:g} s)"
                         )
                         if udp_count == 0 and udp_sockets:
                             connection_status += (
@@ -732,7 +774,10 @@ class NetworkWorker(QThread):
                     })
                     self.snapshot_ready.emit(payload)
 
-                self._stop_event.wait(COUNTER_SAMPLE_INTERVAL_SEC)
+                # A mode change wakes the worker immediately instead of making
+                # the user wait for the previous low-power timeout to expire.
+                self._wake_event.wait(counter_sample_interval)
+                self._wake_event.clear()
 
         except Exception as exc:
             _LOGGER.exception("SwarmAtlas network worker stopped after an unexpected error")

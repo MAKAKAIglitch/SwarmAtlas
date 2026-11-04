@@ -1,6 +1,7 @@
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
+mod geo;
 mod network;
 mod platform;
 
@@ -37,6 +38,29 @@ fn count_udp_bindings(py: Python<'_>) -> PyResult<usize> {
     py.detach(read_udp_count).map_err(PyRuntimeError::new_err)
 }
 
+/// Batch geometry work so Python crosses the FFI boundary once per bounded
+/// group of rings instead of once per ring. The CPU-heavy loop runs without GIL.
+#[pyfunction]
+#[pyo3(signature = (rings, tolerance=0.00001))]
+fn project_and_simplify_rings(
+    py: Python<'_>,
+    rings: Vec<Vec<(f64, f64)>>,
+    tolerance: f64,
+) -> PyResult<Vec<Vec<(f64, f64)>>> {
+    if !tolerance.is_finite() || tolerance < 0.0 {
+        return Err(PyValueError::new_err(
+            "tolerance must be a finite, non-negative number",
+        ));
+    }
+
+    Ok(py.detach(move || {
+        rings
+            .iter()
+            .map(|ring| geo::geometry::project_and_simplify_ring(ring, tolerance))
+            .collect()
+    }))
+}
+
 #[pyfunction]
 fn capabilities() -> Vec<&'static str> {
     vec![
@@ -45,6 +69,7 @@ fn capabilities() -> Vec<&'static str> {
         "tcp-public-endpoints",
         "udp-owner-pid",
         "udp-socket-count",
+        "map-geometry-v1",
         "ipv4",
         "ipv6",
         "read-only",
@@ -56,6 +81,7 @@ fn _swarmatlas_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(list_tcp_connections, module)?)?;
     module.add_function(wrap_pyfunction!(list_udp_bindings, module)?)?;
     module.add_function(wrap_pyfunction!(count_udp_bindings, module)?)?;
+    module.add_function(wrap_pyfunction!(project_and_simplify_rings, module)?)?;
     module.add_function(wrap_pyfunction!(capabilities, module)?)?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
