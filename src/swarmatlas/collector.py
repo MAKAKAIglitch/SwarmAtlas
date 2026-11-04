@@ -686,6 +686,7 @@ class NetworkWorker(QThread):
                         connection_status = f"Socket table unavailable: {exc}"
                     except Exception as exc:
                         connection_status = f"Endpoint scan unavailable: {exc}"
+                    scan_finished = time.monotonic()
                     scan_duration_ms = (time.perf_counter() - scan_started) * 1000.0
                     connection_status += f"; scan {scan_duration_ms:.0f} ms"
                     _LOGGER.debug(
@@ -693,7 +694,9 @@ class NetworkWorker(QThread):
                         scan_duration_ms,
                         scanned_endpoint_count,
                     )
-                    last_endpoint_scan = now_mono
+                    # Schedule the next poll after completion so a slow
+                    # scan cannot trigger a tight retry loop.
+                    last_endpoint_scan = scan_finished
 
                 if now_mono - last_history_sample >= HISTORY_SAMPLE_INTERVAL_SEC:
                     store.add_sample(now_wall, upload_rate, download_rate)
