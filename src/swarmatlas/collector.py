@@ -330,6 +330,17 @@ class NetworkWorker(QThread):
         self._history_range_seconds = 3600
         self._stop_event = threading.Event()
 
+    def _resolve_interface(self, requested: str | None) -> str:
+        """Resolve the selected adapter, falling back to automatic selection if unavailable."""
+        name = str(requested or "auto")
+        if not name.strip() or name.strip().casefold() == "auto":
+            return choose_default_interface()
+
+        stats = psutil.net_if_stats()
+        state = stats.get(name)
+        if state is not None and state.isup:
+            return name
+        return choose_default_interface()
     def set_interface(self, name: str) -> None:
         with self._lock:
             self._requested_interface = name
