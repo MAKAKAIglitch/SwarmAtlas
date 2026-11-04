@@ -16,7 +16,13 @@ from .geoip import GeoLocator
 from .geoip_data import ensure_default_geoip_database
 from .map_data import load_world_boundaries
 from .map_geometry import build_boundary_paths
-from .native import NATIVE_AVAILABLE, backend_status, list_tcp_connections, list_udp_bindings
+from .native import (
+    NATIVE_AVAILABLE,
+    NATIVE_CAPABILITIES,
+    backend_status,
+    list_tcp_connections,
+    list_udp_bindings,
+)
 from .storage import Store
 from .theme import resolve_language
 
@@ -284,10 +290,16 @@ def collect_public_endpoint_snapshot(
             _warm_process_name_cache(item.get("process_id") for item in tcp_rows)
             native_ok = True
             for item in tcp_rows:
-                parsed = _parse_remote((item["ip"], item["port"]))
-                if parsed is None:
-                    continue
-                ip, port = parsed
+                if "tcp-public-endpoints" in NATIVE_CAPABILITIES:
+                    # The current Rust backend already validates/canonicalizes
+                    # public IPs and ports before crossing the PyO3 boundary.
+                    ip = str(item["ip"])
+                    port = int(item["port"])
+                else:
+                    parsed = _parse_remote((item["ip"], item["port"]))
+                    if parsed is None:
+                        continue
+                    ip, port = parsed
                 endpoint = _make_endpoint(
                     ip,
                     port,
