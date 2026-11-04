@@ -292,7 +292,7 @@ def verify_native_wheel(wheel_path: Path, manifest_text: str) -> None:
     expected_hash, asset_name = parts
     if len(expected_hash) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in expected_hash):
         raise ValueError("The native wheel checksum is not a valid SHA-256 digest.")
-    if Path(asset_name).name != NATIVE_WHEEL_FILENAME:
+    if asset_name != NATIVE_WHEEL_FILENAME:
         raise ValueError("The checksum manifest names an unexpected native wheel.")
     if wheel_path.name != NATIVE_WHEEL_FILENAME:
         raise ValueError("Downloaded native wheel filename does not match the expected asset.")
@@ -433,7 +433,7 @@ def refresh_native_extension(root: Path) -> bool:
 
     try:
         return install_prebuilt_native(root, venv_python)
-    except (OSError, ValueError, urllib.error.URLError, RuntimeError) as exc:
+    except Exception as exc:
         say(f"[WARNING] Could not update the Rust core: {type(exc).__name__}: {exc}")
         say("[WARNING] The existing native binary was left in place. Python fallback remains available.")
         return True
