@@ -30,6 +30,15 @@ NATIVE_CHECKSUM_URL = (
 )
 MAX_NATIVE_WHEEL_BYTES = 32 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 4096
+NATIVE_REQUIRED_CAPABILITIES = frozenset({
+    "read-only",
+    "tcp-owner-pid",
+    "tcp-public-endpoints",
+    "udp-owner-pid",
+})
+NATIVE_CAPABILITY_ASSERTION = (
+    "assert {'read-only', 'tcp-owner-pid', 'tcp-public-endpoints', 'udp-owner-pid'} <= caps"
+)
 
 SKIP_PARTS = {
     ".git",
@@ -410,7 +419,7 @@ def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
                     "-c",
                     "import _swarmatlas_native as n; "
                     "caps = set(n.capabilities()); "
-                    "assert {'read-only', 'tcp-owner-pid', 'udp-owner-pid'} <= caps; "
+                    NATIVE_CAPABILITY_ASSERTION + "; "
                     "assert callable(n.list_tcp_connections); "
                     "assert callable(n.list_udp_bindings); "
                     "print('Installed Rust core:', n.__version__)",
