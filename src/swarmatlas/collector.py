@@ -31,6 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Conservative polling: the socket/owner tables are scanned less often than byte counters.
 COUNTER_SAMPLE_INTERVAL_SEC = 1.0
+INTERFACE_CHECK_INTERVAL_SEC = 5.0
 ENDPOINT_SCAN_INTERVAL_SEC = 5.0
 HISTORY_SAMPLE_INTERVAL_SEC = 10.0
 MAX_TRACKED_ENDPOINTS = 2000
@@ -556,6 +557,8 @@ class NetworkWorker(QThread):
                 )
 
             previous_time = time.monotonic()
+            last_interface_check = previous_time
+            last_interface_request = self._requested_interface
             last_endpoint_scan = 0.0
             last_history_sample = 0.0
             upload_rate = 0.0
@@ -607,13 +610,20 @@ class NetworkWorker(QThread):
                     loaded_geoip = geoip_signature
                     self.status_changed.emit(locator.status)
 
-                try:
-                    resolved = self._resolve_interface(requested)
-                except psutil.Error:
-                    resolved = interface
-                if resolved != interface:
-                    interface = resolved
-                    previous_time = now_mono
+                interface_request_changed = requested != last_interface_request
+                interface_check_due = (
+                    now_mono - last_interface_check >= INTERFACE_CHECK_INTERVAL_SEC
+                )
+                if interface_request_changed or interface_check_due:
+                    try:
+                        resolved = self._resolve_interface(requested)
+                    except psutil.Error:
+                        resolved = interface
+                    last_interface_request = requested
+                    last_interface_check = now_mono
+                    if resolved != interface:
+                        interface = resolved
+                        previous_time = now_mono
 
                 try:
                     counters = psutil.net_io_counters(pernic=True) or {}
