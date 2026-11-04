@@ -397,6 +397,9 @@ class MainWindow(QMainWindow):
         root = self.centralWidget()
         if root is None:
             return
+        previous = getattr(self, "_rebuild_fade", None)
+        if previous is not None:
+            previous.stop()
         effect = QGraphicsOpacityEffect(root)
         effect.setOpacity(0.84)
         root.setGraphicsEffect(effect)
@@ -406,7 +409,6 @@ class MainWindow(QMainWindow):
         animation.setEndValue(1.0)
         animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._rebuild_fade = animation
-        animation.finished.connect(lambda: root.setGraphicsEffect(None))
         animation.start()
 
     def _build_ui(self) -> None:
