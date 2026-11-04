@@ -16,6 +16,7 @@ def test_native_extension_reports_read_only_windows_capabilities() -> None:
     assert "read-only" in capabilities
     assert "tcp-owner-pid" in capabilities
     assert "tcp-public-endpoints" in capabilities
+    assert "udp-socket-count" in capabilities
     assert "udp-owner-pid" in capabilities
     assert "ipv4" in capabilities
     assert "ipv6" in capabilities
@@ -106,3 +107,34 @@ def test_current_native_adapter_skips_duplicate_ip_range_classification(monkeypa
     rows = native_adapter.list_tcp_connections(limit=10)
 
     assert rows[0]["ip"] == "8.8.8.8"
+
+
+
+def test_native_udp_count_uses_compact_rust_counter_when_available(monkeypatch) -> None:
+    fake = SimpleNamespace(
+        count_udp_bindings=lambda: 23,
+        list_udp_bindings=lambda _limit: (_ for _ in ()).throw(
+            AssertionError("bulk UDP row conversion should not be used")
+        ),
+    )
+    monkeypatch.setattr(native_adapter, "_native", fake)
+    monkeypatch.setattr(
+        native_adapter,
+        "NATIVE_CAPABILITIES",
+        frozenset({"udp-socket-count"}),
+    )
+
+    assert native_adapter.count_udp_bindings() == 23
+
+
+def test_native_udp_count_falls_back_for_legacy_wheels(monkeypatch) -> None:
+    fake = SimpleNamespace(
+        list_udp_bindings=lambda limit: [
+            ("0.0.0.0", 53000, 10),
+            ("::", 53001, 20),
+        ]
+    )
+    monkeypatch.setattr(native_adapter, "_native", fake)
+    monkeypatch.setattr(native_adapter, "NATIVE_CAPABILITIES", frozenset())
+
+    assert native_adapter.count_udp_bindings() == 2
