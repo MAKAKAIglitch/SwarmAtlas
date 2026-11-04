@@ -113,3 +113,24 @@ def test_map_attribution_includes_openstreetmap_contributors(tmp_path: Path, mon
     window.close()
     window.deleteLater()
     app.processEvents()
+
+
+
+def test_endpoint_table_shows_ip_without_geoip_coordinates(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    window._fill_endpoints([{
+        "ip": "8.8.8.8",
+        "port": 443,
+        "protocol": "TCP",
+        "process_id": 1234,
+    }])
+
+    assert window.endpoint_table.rowCount() == 1
+    assert window.endpoint_table.item(0, 0).text() == "8.8.8.8"
+
+    window.close()
+    window.deleteLater()
+    app.processEvents()
