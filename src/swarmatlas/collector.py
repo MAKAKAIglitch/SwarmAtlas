@@ -589,6 +589,7 @@ class NetworkWorker(QThread):
             # Download and parse Natural Earth polygons off the GUI thread.
             # Once cached, the map works offline on every later launch.
             try:
+                map_started = time.perf_counter()
                 countries, regions = load_world_boundaries(
                     progress=lambda message: self.status_changed.emit(message)
                 )
@@ -596,7 +597,9 @@ class NetworkWorker(QThread):
                 # thousands of vertices. Keep all of that work off the Qt UI thread.
                 country_path, region_path = build_boundary_paths(countries, regions)
                 _LOGGER.info(
-                    "Prepared map geometry off-thread (%d country, %d region path elements)",
+                    "Prepared map geometry off-thread in %.1f ms "
+                    "(%d country, %d region path elements)",
+                    (time.perf_counter() - map_started) * 1000.0,
                     country_path.elementCount(),
                     region_path.elementCount(),
                 )
@@ -693,6 +696,7 @@ class NetworkWorker(QThread):
                     download_rate = 0.0
 
                 if now_mono - last_endpoint_scan >= ENDPOINT_SCAN_INTERVAL_SEC:
+                    scan_started = time.perf_counter()
                     try:
                         endpoints, endpoint_stats = collect_public_endpoint_snapshot()
                         _enrich_endpoints_with_geoip(endpoints, locator)
@@ -727,6 +731,13 @@ class NetworkWorker(QThread):
                         connection_status = f"Socket table unavailable: {exc}"
                     except Exception as exc:
                         connection_status = f"Endpoint scan unavailable: {exc}"
+                    scan_duration_ms = (time.perf_counter() - scan_started) * 1000.0
+                    connection_status += f"; scan {scan_duration_ms:.0f} ms"
+                    _LOGGER.debug(
+                        "Endpoint scan completed in %.1f ms (%d public endpoints)",
+                        scan_duration_ms,
+                        len(endpoints) if "endpoints" in locals() else 0,
+                    )
                     last_endpoint_scan = now_mono
 
                 if now_mono - last_history_sample >= HISTORY_SAMPLE_INTERVAL_SEC:
