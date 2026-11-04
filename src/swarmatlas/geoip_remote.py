@@ -77,17 +77,28 @@ def _normalize(provider: str, data: dict[str, Any]) -> dict[str, Any]:
         })
     elif provider == "ipapi-is":
         location = data.get("location") if isinstance(data.get("location"), dict) else {}
-        company = data.get("company") if isinstance(data.get("company"), dict) else {}
-        asn = data.get("asn") if isinstance(data.get("asn"), dict) else {}
+        company_value = data.get("company")
+        company = company_value if isinstance(company_value, dict) else {}
+        company_name = (
+            company.get("name")
+            if company
+            else company_value if isinstance(company_value, str) else None
+        )
+        asn_value = data.get("asn")
+        asn = asn_value if isinstance(asn_value, dict) else {}
         result.update({
             "country": location.get("country") or data.get("country"),
             "country_code": location.get("country_code") or data.get("country_code"),
             "region": location.get("state") or location.get("region") or data.get("region"),
             "city": location.get("city") or data.get("city"),
-            "latitude": _number(location.get("latitude") or data.get("latitude")),
-            "longitude": _number(location.get("longitude") or data.get("longitude")),
-            "organization": company.get("name") or asn.get("org") or data.get("company_name"),
-            "asn": _asn_number(asn.get("asn") or data.get("asn")),
+            "latitude": _number(
+                location.get("latitude") or data.get("latitude") or data.get("lat")
+            ),
+            "longitude": _number(
+                location.get("longitude") or data.get("longitude") or data.get("lon")
+            ),
+            "organization": company_name or asn.get("org") or data.get("company_name"),
+            "asn": _asn_number(asn.get("asn") or asn_value),
         })
     elif provider == "ipinfo-lite":
         result.update({
@@ -281,9 +292,6 @@ class RemoteGeoLocator:
             base = f"https://api.ipdata.co/{encoded_ip}"
             return base + ("?" + urlencode({"api-key": self.api_key}) if self.api_key else "")
         if self.provider == "ipapi-is":
-            params = {"q": encoded_ip}
-            if self.api_key:
-                params["key"] = self.api_key
             return "https://api.ipapi.is/"
         if self.provider == "ipinfo-lite":
             return f"https://api.ipinfo.io/lite/{encoded_ip}?" + urlencode({"token": self.api_key})
