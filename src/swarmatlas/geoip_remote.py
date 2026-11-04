@@ -64,7 +64,18 @@ def _normalize(provider: str, data: dict[str, Any]) -> dict[str, Any]:
             "asn": _asn_number(data.get("as")),
         })
     elif provider == "ipdata":
-        asn = data.get("asn") if isinstance(data.get("asn"), dict) else {}
+        asn_value = data.get("asn")
+        asn = asn_value if isinstance(asn_value, dict) else {}
+        company_value = data.get("company")
+        company = company_value if isinstance(company_value, dict) else {}
+        organization = (
+            asn.get("name")
+            or data.get("name")
+            or company.get("name")
+            or (company_value if isinstance(company_value, str) else None)
+            or data.get("organisation")
+            or data.get("organization")
+        )
         result.update({
             "country": data.get("country_name"),
             "country_code": data.get("country_code"),
@@ -72,9 +83,9 @@ def _normalize(provider: str, data: dict[str, Any]) -> dict[str, Any]:
             "city": data.get("city"),
             "latitude": _number(data.get("latitude")),
             "longitude": _number(data.get("longitude")),
-            "isp": data.get("organisation") or data.get("organization"),
-            "organization": asn.get("name") or data.get("organisation") or data.get("organization"),
-            "asn": _asn_number(asn.get("asn") or asn.get("number")),
+            "isp": organization,
+            "organization": organization,
+            "asn": _asn_number(asn.get("asn") or asn.get("number") or asn_value),
         })
     elif provider == "ipapi-is":
         location = data.get("location") if isinstance(data.get("location"), dict) else {}
