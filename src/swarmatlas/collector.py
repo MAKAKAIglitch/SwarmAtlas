@@ -88,17 +88,23 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
 class NetworkWorker(QThread):
     snapshot_ready = Signal(dict)
     status_changed = Signal(str)
+    startup_ready = Signal(str)
 
     def __init__(self, config: AppConfig):
         super().__init__()
         self._config = config
         self._lock = threading.Lock()
         self._requested_interface = config.interface
+        self._requested_geoip_databases = tuple(config.resolved_geoip_databases())
         self._stop_event = threading.Event()
 
     def set_interface(self, name: str) -> None:
         with self._lock:
             self._requested_interface = name
+
+    def set_geoip_databases(self, paths: list[str]) -> None:
+        with self._lock:
+            self._requested_geoip_databases = tuple(paths)
 
     def stop(self, timeout_ms: int = 10000) -> bool:
         """Request graceful shutdown; never forcibly terminate the worker."""
@@ -108,13 +114,19 @@ class NetworkWorker(QThread):
     def run(self) -> None:
         store: Store | None = None
         locator: GeoLocator | None = None
+        startup_notified = False
         try:
             store = Store(database_path())
-            locator = GeoLocator(self._config.geoip_database)
+            locator = GeoLocator(self._requested_geoip_databases)
             interface = self._resolve_interface(self._requested_interface)
             self.status_changed.emit(locator.status)
             if not interface:
                 self.status_changed.emit("No active network interface found")
+
+            # The reader files are opened and warmed in this worker thread so
+            # large MMDB initialization never blocks the Qt interface thread.
+            self.startup_ready.emit(locator.status)
+            startup_notified = True
 
             previous_time = time.monotonic()
             last_endpoint_scan = 0.0
@@ -122,6 +134,7 @@ class NetworkWorker(QThread):
             upload_rate = 0.0
             download_rate = 0.0
             connection_status = "Waiting for first network sample"
+            loaded_geoip = self._requested_geoip_databases
 
             while not self._stop_event.is_set():
                 now_mono = time.monotonic()
@@ -129,6 +142,15 @@ class NetworkWorker(QThread):
 
                 with self._lock:
                     requested = self._requested_interface
+                    requested_geoip = self._requested_geoip_databases
+
+                if requested_geoip != loaded_geoip:
+                    if locator is not None:
+                        locator.close()
+                    locator = GeoLocator(requested_geoip)
+                    loaded_geoip = requested_geoip
+                    self.status_changed.emit(locator.status)
+
                 try:
                     resolved = self._resolve_interface(requested)
                 except psutil.Error:
@@ -191,8 +213,14 @@ class NetworkWorker(QThread):
                 self._stop_event.wait(COUNTER_SAMPLE_INTERVAL_SEC)
 
         except Exception as exc:
-            self.status_changed.emit(f"Monitor stopped safely: {type(exc).__name__}: {exc}")
+            message = f"Monitor stopped safely: {type(exc).__name__}: {exc}"
+            self.status_changed.emit(message)
+            if not startup_notified:
+                self.startup_ready.emit(message)
+                startup_notified = True
         finally:
+            if not startup_notified:
+                self.startup_ready.emit("Monitor initialization ended")
             if locator is not None:
                 try:
                     locator.close()
