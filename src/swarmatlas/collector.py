@@ -4,6 +4,7 @@ import ipaddress
 import socket
 import threading
 import time
+from collections import defaultdict
 from typing import Any
 
 import psutil
@@ -11,19 +12,22 @@ from PySide6.QtCore import QThread, Signal
 
 from .config import AppConfig, database_path
 from .geoip import GeoLocator
+from .native import NATIVE_AVAILABLE, backend_status, list_tcp_connections, list_udp_bindings
 from .storage import Store
 
 
-# Conservative polling: socket enumeration is less frequent than byte counters.
+# Conservative polling: the socket/owner tables are scanned less often than byte counters.
 COUNTER_SAMPLE_INTERVAL_SEC = 1.0
 ENDPOINT_SCAN_INTERVAL_SEC = 15.0
 HISTORY_SAMPLE_INTERVAL_SEC = 10.0
 MAX_TRACKED_ENDPOINTS = 2000
+PROCESS_NAME_CACHE_LIMIT = 512
 
 VIRTUAL_MARKERS = (
     "loopback", "virtual", "vmware", "virtualbox", "hyper-v", "vethernet",
     "wintun", "wireguard", "zerotier", "tailscale", "tap-", "docker", "wsl",
 )
+_PROCESS_NAME_CACHE: dict[int, str | None] = {}
 
 
 def available_interfaces() -> list[str]:
@@ -61,26 +65,177 @@ def choose_default_interface() -> str:
     )
 
 
-def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[str, Any]]:
-    """Read the OS socket table; do not capture packets or open sockets."""
-    found: dict[tuple[str, int, str], dict[str, Any]] = {}
-    for connection in psutil.net_connections(kind="inet"):
-        remote = connection.raddr
-        if not remote:
-            continue
-        ip = str(getattr(remote, "ip", remote[0]))
-        try:
-            address = ipaddress.ip_address(ip)
-        except ValueError:
-            continue
-        if not address.is_global:
-            continue
+def _process_name(process_id: int | None) -> str | None:
+    if not process_id or process_id <= 0:
+        return None
+    if process_id in _PROCESS_NAME_CACHE:
+        return _PROCESS_NAME_CACHE[process_id]
 
-        port = int(getattr(remote, "port", remote[1]))
+    try:
+        name = psutil.Process(process_id).name()
+    except (psutil.Error, OSError):
+        name = None
+
+    if len(_PROCESS_NAME_CACHE) >= PROCESS_NAME_CACHE_LIMIT:
+        _PROCESS_NAME_CACHE.clear()
+    _PROCESS_NAME_CACHE[process_id] = name
+    return name
+
+
+def _parse_remote(remote: Any) -> tuple[str, int] | None:
+    if not remote:
+        return None
+    ip = str(getattr(remote, "ip", remote[0]))
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+        ip = str(address)
+    if not address.is_global:
+        return None
+    port = int(getattr(remote, "port", remote[1]))
+    return ip, port
+
+
+def _make_endpoint(
+    ip: str,
+    port: int,
+    protocol: str,
+    process_id: int | None = None,
+    local_port: int = 0,
+    connection_state: str = "",
+) -> dict[str, Any]:
+    return {
+        "ip": ip,
+        "port": int(port),
+        "protocol": protocol,
+        "process_id": int(process_id) if process_id else None,
+        "process_name": _process_name(int(process_id)) if process_id else None,
+        "local_port": int(local_port or 0),
+        "connection_state": connection_state or None,
+    }
+
+
+def _udp_owner_index() -> tuple[dict[tuple[str, int], int], dict[int, set[int]]]:
+    exact: dict[tuple[str, int], int] = {}
+    by_port: dict[int, set[int]] = defaultdict(set)
+    if not NATIVE_AVAILABLE:
+        return exact, by_port
+
+    try:
+        for binding in list_udp_bindings():
+            process_id = binding.get("process_id")
+            local_port = int(binding["local_port"])
+            local_ip = str(binding["local_ip"])
+            if process_id:
+                exact[(local_ip, local_port)] = int(process_id)
+                by_port[local_port].add(int(process_id))
+    except Exception:
+        # UDP bindings are supplemental; TCP ownership remains available.
+        return {}, {}
+    return exact, by_port
+
+
+def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[str, Any]]:
+    """Read public remote endpoints and their owning PIDs, without packet capture."""
+    found: dict[tuple[str, int, str, int, int], dict[str, Any]] = {}
+    max_items = max(1, int(limit))
+
+    if NATIVE_AVAILABLE:
+        native_ok = False
+        try:
+            tcp_rows = list_tcp_connections()
+            native_ok = True
+            for item in tcp_rows:
+                parsed = _parse_remote((item["ip"], item["port"]))
+                if parsed is None:
+                    continue
+                ip, port = parsed
+                endpoint = _make_endpoint(
+                    ip,
+                    port,
+                    "TCP",
+                    item.get("process_id"),
+                    item.get("local_port", 0),
+                    item.get("connection_state", ""),
+                )
+                key = (
+                    ip, port, "TCP",
+                    int(endpoint.get("process_id") or 0),
+                    int(endpoint.get("local_port") or 0),
+                )
+                found[key] = endpoint
+                if len(found) >= max_items:
+                    return list(found.values())
+        except Exception:
+            # A missing DLL, denied table, or incompatible extension falls back
+            # to psutil. Nothing is elevated or changed in the Windows stack.
+            native_ok = False
+            found.clear()
+
+        if native_ok:
+            udp_exact, udp_by_port = _udp_owner_index()
+            try:
+                udp_connections = psutil.net_connections(kind="udp")
+            except psutil.Error:
+                udp_connections = []
+
+            for connection in udp_connections:
+                parsed = _parse_remote(connection.raddr)
+                if parsed is None:
+                    continue
+                ip, port = parsed
+                local = connection.laddr
+                local_ip = str(getattr(local, "ip", local[0] if local else ""))
+                local_port = int(getattr(local, "port", local[1] if local else 0))
+                process_id = getattr(connection, "pid", None)
+                if not process_id:
+                    process_id = udp_exact.get((local_ip, local_port))
+                if not process_id:
+                    matches = udp_by_port.get(local_port, set())
+                    if len(matches) == 1:
+                        process_id = next(iter(matches))
+                endpoint = _make_endpoint(
+                    ip, port, "UDP", process_id, local_port, "CONNECTED"
+                )
+                key = (
+                    ip, port, "UDP",
+                    int(endpoint.get("process_id") or 0),
+                    int(endpoint.get("local_port") or 0),
+                )
+                found[key] = endpoint
+                if len(found) >= max_items:
+                    break
+            return list(found.values())
+
+    # Compatibility backend. This is also used when the native extension is
+    # not built, preserving the existing first-run experience.
+    for connection in psutil.net_connections(kind="inet"):
+        parsed = _parse_remote(connection.raddr)
+        if parsed is None:
+            continue
+        ip, port = parsed
         protocol = "UDP" if connection.type == socket.SOCK_DGRAM else "TCP"
-        key = (ip, port, protocol)
-        found[key] = {"ip": ip, "port": port, "protocol": protocol}
-        if len(found) >= max(1, limit):
+        local = connection.laddr
+        local_port = int(getattr(local, "port", local[1] if local else 0))
+        process_id = getattr(connection, "pid", None)
+        endpoint = _make_endpoint(
+            ip,
+            port,
+            protocol,
+            process_id,
+            local_port,
+            str(getattr(connection, "status", "") or ""),
+        )
+        key = (
+            ip, port, protocol,
+            int(endpoint.get("process_id") or 0),
+            int(endpoint.get("local_port") or 0),
+        )
+        found[key] = endpoint
+        if len(found) >= max_items:
             break
     return list(found.values())
 
@@ -119,13 +274,13 @@ class NetworkWorker(QThread):
             store = Store(database_path())
             locator = GeoLocator(self._requested_geoip_databases)
             interface = self._resolve_interface(self._requested_interface)
-            self.status_changed.emit(locator.status)
+            status = f"{locator.status} · {backend_status()}"
+            self.status_changed.emit(status)
             if not interface:
                 self.status_changed.emit("No active network interface found")
 
-            # The reader files are opened and warmed in this worker thread so
-            # large MMDB initialization never blocks the Qt interface thread.
-            self.startup_ready.emit(locator.status)
+            # MMDB readers are opened on this worker; UI startup stays responsive.
+            self.startup_ready.emit(status)
             startup_notified = True
 
             previous_time = time.monotonic()
@@ -185,7 +340,13 @@ class NetworkWorker(QThread):
                         for endpoint in endpoints:
                             endpoint.update(locator.lookup(endpoint["ip"]))
                         store.update_destinations(endpoints, now_wall)
-                        connection_status = f"{len(endpoints)} public endpoints observed (scan every 15 s)"
+                        owner_count = sum(
+                            1 for endpoint in endpoints if endpoint.get("process_id")
+                        )
+                        connection_status = (
+                            f"{len(endpoints)} public endpoints observed; "
+                            f"{owner_count} with process owner (scan every 15 s)"
+                        )
                     except psutil.AccessDenied:
                         connection_status = "Socket table access restricted; interface totals still work"
                     except psutil.Error as exc:
@@ -206,6 +367,7 @@ class NetworkWorker(QThread):
                         "download_bps": download_rate,
                         "connection_status": connection_status,
                         "geoip_status": locator.status,
+                        "native_status": backend_status(),
                         "read_only": True,
                     })
                     self.snapshot_ready.emit(payload)
