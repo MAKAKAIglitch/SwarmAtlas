@@ -591,13 +591,7 @@ class NetworkWorker(QThread):
                         for endpoint in endpoints:
                             endpoint.update(locator.lookup(endpoint["ip"]))
                         store.update_destinations(endpoints, now_wall)
-                        if interface:
-                            summary = store.summary(interface, now_wall)
-                            cached_destination_summary = {
-                                "active_endpoints": summary["active_endpoints"],
-                                "countries": summary["countries"],
-                                "regions": summary["regions"],
-                            }
+                        cached_destination_summary = store.destination_summary(now_wall)
                         owner_count = sum(
                             1 for endpoint in endpoints if endpoint.get("process_id")
                         )
