@@ -55,7 +55,7 @@ def test_geoip_provider_and_token_settings_round_trip(tmp_path: Path, monkeypatc
     config = AppConfig(
         geoip_provider="2ip",
         geoip_api_key="local-test-token",
-        geoip_api_keys={"ipdata": "ipdata-token"},
+        geoip_api_keys={"ipdata": "ipdata-token", "ip2location": "ip2location-token"},
     )
     config.save()
     restored = AppConfig.load()
@@ -64,6 +64,7 @@ def test_geoip_provider_and_token_settings_round_trip(tmp_path: Path, monkeypatc
     assert restored.geoip_api_keys == {
         "2ip": "local-test-token",
         "ipdata": "ipdata-token",
+        "ip2location": "ip2location-token",
     }
 
 
