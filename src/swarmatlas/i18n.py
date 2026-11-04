@@ -12,6 +12,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "geoip_settings": "GeoIP database",
         "theme": "Theme",
         "language": "Language",
+        "system": "System default",
+        "geoip_dialog_intro": "Select one or more local MMDB databases. City, Country, ASN and ISP files can be combined.",
+        "geoip_privacy_note": "Databases are read locally. Peer IP addresses are not sent to an online geolocation service.",
+        "geoip_add": "Add databases…",
+        "geoip_remove": "Remove selected",
+        "geoip_empty": "No databases selected",
+        "provider": "Network / ASN",
+        "preparing": "Preparing local GeoIP databases…",
         "dark": "Dark",
         "light": "Light",
         "russian": "Русский",
@@ -59,6 +67,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "status_geoip_install": "Install the optional 'geoip' dependency",
         "status_geoip_open": "Could not open GeoIP database: {detail}",
         "status_local_geoip": "Local GeoIP: {name}",
+        "status_geoip_ready": "Local GeoIP databases prepared: {detail}",
         "status_endpoints": "{count} public endpoints observed (scan every 15 s)",
         "status_interface_error": "Interface counters unavailable: {detail}",
         "status_socket_error": "Socket table unavailable: {detail}",
@@ -75,6 +84,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "geoip_settings": "База GeoIP",
         "theme": "Тема",
         "language": "Язык",
+        "system": "Как в системе",
+        "geoip_dialog_intro": "Добавьте одну или несколько локальных баз MMDB. Можно объединять City, Country, ASN и ISP.",
+        "geoip_privacy_note": "Базы читаются локально. IP-адреса пиров не отправляются сторонним геосервисам.",
+        "geoip_add": "Добавить базы…",
+        "geoip_remove": "Удалить выбранные",
+        "geoip_empty": "Базы не выбраны",
+        "provider": "Сеть / ASN",
+        "preparing": "Подготовка локальных баз GeoIP…",
         "dark": "Тёмная",
         "light": "Светлая",
         "russian": "Русский",
@@ -122,6 +139,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "status_geoip_install": "Установите дополнительную зависимость «geoip»",
         "status_geoip_open": "Не удалось открыть базу GeoIP: {detail}",
         "status_local_geoip": "Локальная база GeoIP: {name}",
+        "status_geoip_ready": "Подготовлены локальные базы GeoIP: {detail}",
         "status_endpoints": "Обнаружено публичных узлов: {count} (сканирование каждые 15 с)",
         "status_interface_error": "Счётчики интерфейса недоступны: {detail}",
         "status_socket_error": "Таблица соединений недоступна: {detail}",
@@ -169,6 +187,14 @@ def translate_status(status: str, language: str = "ru") -> str:
         match = re.match(pattern, status)
         if match:
             return tr(translation_key, language, **{field: match.group(1)})
+
+    match = re.match(r"^Local GeoIP ready: (.*?)(?:; skipped (\d+))?$", status)
+    if match:
+        detail = match.group(1)
+        skipped = match.group(2)
+        if skipped:
+            detail += f"; skipped: {skipped}"
+        return tr("status_geoip_ready", language, detail=detail)
 
     match = re.match(r"^(\d+) public endpoints observed \(scan every 15 s\)$", status)
     if match:
