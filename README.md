@@ -45,14 +45,18 @@ The online providers are intentionally not queried in parallel: select one sourc
 
 **Privacy note:** online GeoIP necessarily discloses the looked-up destination IP to the selected provider. IP-API's free endpoint is unencrypted HTTP, so it is not a privacy-equivalent alternative to the HTTPS providers. Do not select it unless its non-commercial terms and transport characteristics suit your use. DB-IP Lite is recommended for private/offline use.
 
-On first launch, DB-IP City Lite is downloaded from the official DB-IP host when offline mode is selected and no valid local copy exists. The file is checked against the publisher's checksum and validated as an MMDB before being installed. A valid cached file remains usable if a later refresh fails. The database refreshes after 30 days. Natural Earth country and Admin-1 boundaries are cached locally; after setup, the map can render offline.
+On first launch, DB-IP City Lite is downloaded from the official DB-IP host when offline mode is selected and no valid local copy exists. The file is checked against the publisher's checksum and validated as an MMDB before being installed. A valid cached file remains usable if a later refresh fails. The database refreshes after 30 days. Natural Earth country and Admin-1 boundaries are cached locally. The map uses OpenStreetMap standard raster tiles for place labels and background detail; those tiles are cached according to the server's HTTP cache headers (up to a 128 MiB local cache). Without a connection, previously cached tiles remain available and local Natural Earth boundaries provide a fallback.
 
-You can also add local City, Country, ASN or ISP MMDB files using **Local MMDB files…**. The default DB-IP City Lite and the Natural Earth map files are stored in the standard application-data directory.
+You can also add local City, Country, ASN or ISP MMDB files using **Local MMDB files…**. The default DB-IP City Lite, Natural Earth map files and OpenStreetMap tile cache are stored in the standard application-data directory.
 
 ## Map and regions
 
-- Interactive world map: wheel zoom, drag-to-pan, zoom controls and enlarged view.
-- Country and first-level region boundaries from Natural Earth.
+- The background map uses **OpenStreetMap** standard raster tiles, with visible place labels.
+- Country boundaries and first-level administrative region borders are overlaid from Natural Earth; OSM labels add country, region and city names.
+- The scale starts at a world view and is capped at OSM **zoom level 8**. It is intended for country/region/city context, not street, house or building detail.
+- Tiles are requested only for the map area currently visible. There is no bulk download, area prefetch or offline map-pack feature.
+- Qt's local disk cache honours the tile server's HTTP cache headers and validators; the cache is limited to 128 MiB. The map falls back to local Natural Earth boundaries when tiles are unavailable.
+- Attribution is shown on the map: **© OpenStreetMap contributors**. OpenStreetMap data is available under the [ODbL](https://www.openstreetmap.org/copyright); the public tile service has its own [tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
 - Approximate IP markers from the chosen GeoIP source.
 - Country and region tables count distinct observed endpoint IPs. These are **endpoint counts, not bandwidth totals**.
 - IP locations are estimates and do not identify a device's physical location.
