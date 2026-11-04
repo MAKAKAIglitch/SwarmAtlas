@@ -78,6 +78,19 @@ def system_theme() -> str:
 
 
 def system_language() -> str:
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            language_id = int(ctypes.windll.kernel32.GetUserDefaultUILanguage())
+            primary_language = language_id & 0x03FF
+            if primary_language == 0x19:  # LANG_RUSSIAN
+                return "ru"
+            if primary_language == 0x09:  # LANG_ENGLISH
+                return "en"
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+
     try:
         from PySide6.QtCore import QLocale
 
