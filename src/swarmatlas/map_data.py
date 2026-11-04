@@ -133,42 +133,88 @@ def ensure_natural_earth_data(
     return result["countries"], result["regions"]
 
 
-def _split_antimeridian(points: list[tuple[float, float]]) -> list[list[tuple[float, float]]]:
-    """Avoid drawing a long line across the whole map at the +/-180° meridian."""
-    segments: list[list[tuple[float, float]]] = []
+def _iter_split_antimeridian(
+    points: list[tuple[float, float]],
+    start: int,
+    end: int,
+):
+    """Yield one valid ring segment without copying the full shapefile part."""
     current: list[tuple[float, float]] = []
-    for longitude, latitude in points:
+    previous_longitude: float | None = None
+    for index in range(start, end):
+        longitude, latitude = points[index]
         if not (-180.5 <= longitude <= 180.5 and -90.5 <= latitude <= 90.5):
             continue
         point = (float(longitude), float(latitude))
-        if current and abs(point[0] - current[-1][0]) > 180.0:
+        if previous_longitude is not None and abs(longitude - previous_longitude) > 180.0:
             if len(current) >= 2:
-                segments.append(current)
+                yield current
             current = []
         current.append(point)
+        previous_longitude = longitude
+
     if len(current) >= 2:
-        segments.append(current)
-    return segments
+        yield current
 
 
-def read_polygon_rings(shapefile_path: Path) -> list[list[tuple[float, float]]]:
-    """Read polygon rings with pyshp; no GIS runtime or network service is needed."""
+def _split_antimeridian(points: list[tuple[float, float]]) -> list[list[tuple[float, float]]]:
+    """Compatibility list wrapper for callers that need materialized segments."""
+    return list(_iter_split_antimeridian(points, 0, len(points)))
+
+
+def iter_polygon_rings(shapefile_path: Path):
+    """Stream one polygon ring at a time instead of holding a whole dataset in RAM."""
     import shapefile
 
-    reader = shapefile.Reader(str(shapefile_path), encoding="utf-8", encodingErrors="replace")
-    rings: list[list[tuple[float, float]]] = []
+    reader = shapefile.Reader(
+        str(shapefile_path),
+        encoding="utf-8",
+        encodingErrors="replace",
+    )
     try:
         for shape in reader.iterShapes():
             points = shape.points
             if len(points) < 3:
                 continue
-            starts = list(shape.parts) + [len(points)]
+            starts = list(shape.parts)
+            if not starts:
+                starts = [0]
+            starts.append(len(points))
             for start, end in zip(starts, starts[1:]):
-                raw_points = [(float(x), float(y)) for x, y in points[start:end]]
-                rings.extend(_split_antimeridian(raw_points))
+                if end - start < 3:
+                    continue
+                yield from _iter_split_antimeridian(points, start, end)
     finally:
         reader.close()
-    return rings
+
+
+def read_polygon_rings(shapefile_path: Path) -> list[list[tuple[float, float]]]:
+    """Read polygon rings with pyshp; no GIS runtime or network service is needed."""
+    return list(iter_polygon_rings(shapefile_path))
+
+def load_world_boundary_paths(
+    progress: Callable[[str], None] | None = None,
+):
+    """Stream shapefile rings directly into simplified Qt paths.
+
+    Unlike load_world_boundaries(), this path does not retain every raw coordinate
+    tuple from both Natural Earth datasets at once. It is intended for the desktop
+    collector, where only the final renderable paths are needed.
+    """
+    country_file, region_file = ensure_natural_earth_data(
+        lambda _dataset, value: progress(f"Downloading map data: {value}%")
+        if progress else None
+    )
+    if progress:
+        progress("Loading country boundaries…")
+
+    from .map_geometry import build_boundary_paths
+
+    country_path, _ = build_boundary_paths(iter_polygon_rings(country_file), [])
+    if progress:
+        progress("Loading region boundaries…")
+    _, region_path = build_boundary_paths([], iter_polygon_rings(region_file))
+    return country_path, region_path
 
 
 def load_world_boundaries(
