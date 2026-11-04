@@ -6,4 +6,4 @@ pub(crate) use windows::{count_udp_bindings, list_tcp_connections, list_udp_bind
 #[cfg(not(windows))]
 mod unsupported;
 #[cfg(not(windows))]
-pub(crate) use unsupported::{list_tcp_connections, list_udp_bindings, TcpConnection, UdpBinding};
+pub(crate) use unsupported::{count_udp_bindings, list_tcp_connections, list_udp_bindings, TcpConnection, UdpBinding};
