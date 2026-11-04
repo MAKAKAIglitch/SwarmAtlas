@@ -5,6 +5,7 @@ from collections import namedtuple
 from types import SimpleNamespace
 
 from swarmatlas import collector
+from swarmatlas.config import AppConfig
 
 
 Address = namedtuple("Address", "ip port")
@@ -129,3 +130,43 @@ def test_remote_parser_accepts_attribute_addresses_without_tuple_indexing() -> N
 def test_remote_parser_rejects_invalid_ports() -> None:
     assert collector._parse_remote(("8.8.8.8", -1)) is None
     assert collector._parse_remote(("8.8.8.8", 65536)) is None
+
+
+
+def test_network_worker_resolves_auto_interface(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "choose_default_interface", lambda: "Wi-Fi")
+    worker = collector.NetworkWorker(AppConfig(interface="auto"))
+
+    assert worker._resolve_interface("auto") == "Wi-Fi"
+
+
+def test_network_worker_preserves_selected_active_interface(monkeypatch) -> None:
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_if_stats",
+        lambda: {"Ethernet": SimpleNamespace(isup=True)},
+    )
+    monkeypatch.setattr(
+        collector,
+        "choose_default_interface",
+        lambda: "Wi-Fi",
+    )
+    worker = collector.NetworkWorker(AppConfig(interface="Ethernet"))
+
+    assert worker._resolve_interface("Ethernet") == "Ethernet"
+
+
+def test_network_worker_falls_back_when_saved_interface_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_if_stats",
+        lambda: {"Ethernet": SimpleNamespace(isup=False)},
+    )
+    monkeypatch.setattr(
+        collector,
+        "choose_default_interface",
+        lambda: "Wi-Fi",
+    )
+    worker = collector.NetworkWorker(AppConfig(interface="Ethernet"))
+
+    assert worker._resolve_interface("Ethernet") == "Wi-Fi"
