@@ -38,3 +38,22 @@ def test_saving_theme_does_not_persist_automatic_database_as_user_selection(
     assert loaded.theme == "dark"
     assert loaded.configured_geoip_databases() == []
     assert loaded.resolved_geoip_databases() == [str(default)]
+
+
+
+def test_database_directory_is_configurable_and_created(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "app_data_dir", lambda: tmp_path / "settings")
+    selected = tmp_path / "other-drive" / "SwarmAtlas"
+    config = AppConfig(database_directory=str(selected))
+    path = config_module.database_path(config)
+    assert path == selected / "swarmatlas.sqlite3"
+    assert selected.is_dir()
+
+
+def test_geoip_provider_and_token_settings_round_trip(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(config_module, "app_data_dir", lambda: tmp_path)
+    config = AppConfig(geoip_provider="2ip", geoip_api_key="local-test-token")
+    config.save()
+    restored = AppConfig.load()
+    assert restored.geoip_provider == "2ip"
+    assert restored.geoip_api_key == "local-test-token"
