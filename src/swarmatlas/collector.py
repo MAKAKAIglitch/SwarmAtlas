@@ -161,24 +161,27 @@ def _make_endpoint(
     }
 
 
-def _udp_owner_index() -> tuple[dict[tuple[str, int], int], dict[int, set[int]]]:
+def _udp_owner_index() -> tuple[
+    dict[tuple[str, int], int], dict[int, set[int]], int, str | None
+]:
     exact: dict[tuple[str, int], int] = {}
     by_port: dict[int, set[int]] = defaultdict(set)
     if not NATIVE_AVAILABLE:
-        return exact, by_port
+        return exact, by_port, 0, None
 
     try:
-        for binding in list_udp_bindings():
+        bindings = list_udp_bindings()
+        for binding in bindings:
             process_id = binding.get("process_id")
             local_port = int(binding["local_port"])
             local_ip = str(binding["local_ip"])
             if process_id:
                 exact[(local_ip, local_port)] = int(process_id)
                 by_port[local_port].add(int(process_id))
-    except Exception:
+        return exact, by_port, len(bindings), None
+    except Exception as exc:
         # UDP bindings are supplemental; TCP ownership remains available.
-        return {}, {}
-    return exact, by_port
+        return {}, {}, 0, f"{type(exc).__name__}: {exc}"
 
 
 def _interleave_endpoints(
@@ -209,11 +212,15 @@ def _interleave_endpoints(
     return result
 
 
-def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[str, Any]]:
-    """Read public remote endpoints and their owning PIDs, without packet capture."""
+def collect_public_endpoint_snapshot(
+    limit: int = MAX_TRACKED_ENDPOINTS,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Collect public peers and report local UDP sockets separately from UDP peers."""
     max_items = max(1, int(limit))
     tcp_found: dict[tuple[str, int, str, int, int], dict[str, Any]] = {}
     udp_found: dict[tuple[str, int, str, int, int], dict[str, Any]] = {}
+    udp_binding_count = 0
+    udp_binding_error: str | None = None
 
     if NATIVE_AVAILABLE:
         native_ok = False
@@ -249,9 +256,8 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
 
         if native_ok:
             # A successful Windows API call may still produce no usable public
-            # rows (for example, due to an OS/build-specific table response).
-            # Cross-check an empty native result with psutil before declaring
-            # that there are no active TCP destinations.
+            # rows. Cross-check an empty native result with psutil before
+            # declaring that there are no active TCP destinations.
             if not tcp_found:
                 try:
                     fallback_tcp = psutil.net_connections(kind="tcp")
@@ -283,15 +289,21 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
                     if len(tcp_found) >= max_items:
                         break
 
-            udp_exact, udp_by_port = _udp_owner_index()
+            udp_exact, udp_by_port, udp_binding_count, udp_binding_error = _udp_owner_index()
             try:
                 udp_connections = psutil.net_connections(kind="udp")
-            except psutil.Error:
+                udp_binding_count = max(udp_binding_count, len(udp_connections))
+            except psutil.Error as exc:
                 udp_connections = []
+                if udp_binding_error is None:
+                    udp_binding_error = f"{type(exc).__name__}: {exc}"
 
             for connection in udp_connections:
                 parsed = _parse_remote(connection.raddr)
                 if parsed is None:
+                    # Windows normally reports only the local address for an
+                    # unconnected UDP socket. Count it as a socket, never as a
+                    # guessed remote peer.
                     continue
                 ip, port = parsed
                 local = _address_parts(connection.laddr)
@@ -314,11 +326,21 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
                 udp_found[key] = endpoint
                 if len(udp_found) >= max_items:
                     break
-            return _interleave_endpoints(tcp_found, udp_found, max_items)
+
+            stats = {
+                "udp_local_sockets": udp_binding_count,
+                "udp_public_peers": len(udp_found),
+                "udp_binding_error": udp_binding_error,
+            }
+            return _interleave_endpoints(tcp_found, udp_found, max_items), stats
 
     # Compatibility backend. This is also used when the native extension is
     # not built, preserving the existing first-run experience.
-    for connection in psutil.net_connections(kind="inet"):
+    connections = psutil.net_connections(kind="inet")
+    udp_binding_count = sum(
+        1 for connection in connections if connection.type == socket.SOCK_DGRAM
+    )
+    for connection in connections:
         parsed = _parse_remote(connection.raddr)
         if parsed is None:
             continue
@@ -345,7 +367,19 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
             target[key] = endpoint
         if len(tcp_found) >= max_items and len(udp_found) >= max_items:
             break
-    return _interleave_endpoints(tcp_found, udp_found, max_items)
+
+    stats = {
+        "udp_local_sockets": udp_binding_count,
+        "udp_public_peers": len(udp_found),
+        "udp_binding_error": None,
+    }
+    return _interleave_endpoints(tcp_found, udp_found, max_items), stats
+
+
+def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[str, Any]]:
+    """Backward-compatible peer-only view of the endpoint collector."""
+    endpoints, _stats = collect_public_endpoint_snapshot(limit)
+    return endpoints
 
 
 class NetworkWorker(QThread):
