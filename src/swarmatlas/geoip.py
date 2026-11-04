@@ -105,14 +105,18 @@ class GeoLocator:
                 continue
 
             if kind == "city":
-                result["country_code"] = result.get("country_code") or response.country.iso_code
-                result["country"] = result.get("country") or response.country.name
-                result["region"] = result.get("region") or response.subdivisions.most_specific.name
-                result["city"] = result.get("city") or response.city.name
+                country = getattr(response, "country", None)
+                subdivision = getattr(getattr(response, "subdivisions", None), "most_specific", None)
+                city = getattr(response, "city", None)
+                location = getattr(response, "location", None)
+                result["country_code"] = result.get("country_code") or getattr(country, "iso_code", None)
+                result["country"] = result.get("country") or getattr(country, "name", None)
+                result["region"] = result.get("region") or getattr(subdivision, "name", None)
+                result["city"] = result.get("city") or getattr(city, "name", None)
                 if result.get("latitude") is None:
-                    result["latitude"] = response.location.latitude
+                    result["latitude"] = getattr(location, "latitude", None)
                 if result.get("longitude") is None:
-                    result["longitude"] = response.location.longitude
+                    result["longitude"] = getattr(location, "longitude", None)
             elif kind == "country":
                 result["country_code"] = result.get("country_code") or response.country.iso_code
                 result["country"] = result.get("country") or response.country.name
