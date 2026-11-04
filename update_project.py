@@ -189,6 +189,7 @@ def overlay_update(source: Path, root: Path, backup: Path) -> int:
         raise
     return updated
 
+
 def update_git_checkout(root: Path) -> bool:
     git_dir = root / ".git"
     if not git_dir.exists():
@@ -258,7 +259,6 @@ def refresh_dependencies(root: Path) -> bool:
     return process.returncode == 0
 
 
-
 def download_limited_asset(url: str, destination: Path, maximum_bytes: int) -> None:
     request = urllib.request.Request(
         url,
@@ -305,8 +305,45 @@ def verify_native_wheel(wheel_path: Path, manifest_text: str) -> None:
         raise ValueError("Native wheel SHA-256 verification failed.")
 
 
+def _installed_native_module_path(root: Path, venv_python: Path) -> Path:
+    """Resolve the current extension inside this project's venv before replacing it."""
+    probe = subprocess.run(
+        [
+            str(venv_python),
+            "-c",
+            "import importlib.util; "
+            "spec = importlib.util.find_spec('_swarmatlas_native'); "
+            "print(spec.origin if spec and spec.origin else '')",
+        ],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if probe.returncode != 0:
+        raise RuntimeError("Could not locate the currently installed Rust extension.")
+
+    raw_path = probe.stdout.strip()
+    if not raw_path:
+        raise RuntimeError("The installed Rust extension has no recoverable module path.")
+
+    module_path = Path(raw_path).resolve()
+    venv_root = (root / ".venv").resolve()
+    try:
+        module_path.relative_to(venv_root)
+    except ValueError as exc:
+        raise RuntimeError(
+            "The Rust extension resolved outside the project virtual environment."
+        ) from exc
+
+    if not module_path.is_file():
+        raise RuntimeError("The installed Rust extension file is missing; update aborted safely.")
+    return module_path
+
+
 def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
-    """Download a public, stable-ABI wheel and verify it before local installation."""
+    """Verify, back up, install, and verify the optional native wheel transactionally."""
     with tempfile.TemporaryDirectory(prefix="swarmatlas-native-") as temporary:
         directory = Path(temporary)
         wheel_path = directory / NATIVE_WHEEL_FILENAME
@@ -328,40 +365,68 @@ def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
             manifest_path.read_text(encoding="ascii"),
         )
 
+        # This updater path is only used for an already-enabled extension.
+        # Keep a byte-for-byte backup so failed installation/import checks can
+        # restore the previous .pyd instead of leaving a broken native module.
+        previous_module = _installed_native_module_path(root, venv_python)
+        backup_path = directory / "previous_native_module.bak"
+        shutil.copy2(previous_module, backup_path)
+
         say("[Updater] Native wheel SHA-256 verified. Installing the local file...")
         install_env = os.environ.copy()
         install_env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
-        result = subprocess.run(
-            [
-                str(venv_python),
-                "-m",
-                "pip",
-                "install",
-                "--no-index",
-                "--no-deps",
-                "--force-reinstall",
-                str(wheel_path),
-            ],
-            cwd=str(root),
-            env=install_env,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise RuntimeError("pip could not install the verified native wheel.")
+        try:
+            result = subprocess.run(
+                [
+                    str(venv_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-index",
+                    "--no-deps",
+                    "--force-reinstall",
+                    str(wheel_path),
+                ],
+                cwd=str(root),
+                env=install_env,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError("pip could not install the verified native wheel.")
 
-        verification = subprocess.run(
-            [
-                str(venv_python),
-                "-c",
-                "import _swarmatlas_native as n; "
-                "assert 'read-only' in n.capabilities(); "
-                "print('Installed Rust core:', n.__version__)",
-            ],
-            cwd=str(root),
-            text=True,
-        )
-        if verification.returncode != 0:
-            raise RuntimeError("The newly installed native extension did not pass its import check.")
+            verification = subprocess.run(
+                [
+                    str(venv_python),
+                    "-c",
+                    "import _swarmatlas_native as n; "
+                    "caps = set(n.capabilities()); "
+                    "assert {'read-only', 'tcp-owner-pid', 'udp-owner-pid'} <= caps; "
+                    "assert callable(n.list_tcp_connections); "
+                    "assert callable(n.list_udp_bindings); "
+                    "print('Installed Rust core:', n.__version__)",
+                ],
+                cwd=str(root),
+                text=True,
+            )
+            if verification.returncode != 0:
+                raise RuntimeError(
+                    "The newly installed native extension did not pass its import check."
+                )
+        except Exception as install_error:
+            try:
+                restore_path = previous_module.with_name(
+                    previous_module.name + ".swarmatlas-restore"
+                )
+                shutil.copy2(backup_path, restore_path)
+                os.replace(restore_path, previous_module)
+                say("[Updater] Previous Rust extension restored successfully.")
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "Native update failed and automatic rollback also failed. "
+                    f"Previous extension backup: {backup_path.name}; "
+                    f"restore error: {type(rollback_error).__name__}."
+                ) from install_error
+            raise
 
     say("[Updater] Prebuilt Rust core updated successfully.")
     return True
@@ -439,9 +504,8 @@ def refresh_native_extension(root: Path) -> bool:
         return install_prebuilt_native(root, venv_python)
     except Exception as exc:
         say(f"[WARNING] Could not update the Rust core: {type(exc).__name__}: {exc}")
-        say("[WARNING] The existing native binary was left in place. Python fallback remains available.")
+        say("[WARNING] The update was rolled back when possible. The Python compatibility collector remains available.")
         return True
-
 
 
 def main() -> int:

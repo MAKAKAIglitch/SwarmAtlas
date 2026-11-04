@@ -7,6 +7,7 @@ import pytest
 
 from update_project import (
     NATIVE_WHEEL_FILENAME,
+    install_prebuilt_native,
     refresh_native_extension,
     safe_members,
     should_skip,
@@ -44,7 +45,6 @@ def test_update_archive_requires_single_repository_root(tmp_path: Path) -> None:
     with zipfile.ZipFile(archive_path) as archive:
         with pytest.raises(ValueError, match="one expected repository root"):
             safe_members(archive)
-
 
 
 def test_updater_leaves_python_fallback_when_rust_extension_is_absent(
@@ -122,6 +122,48 @@ def test_native_wheel_rejects_unexpected_asset_name(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="unexpected native wheel"):
         verify_native_wheel(wheel, f"{'0' * 64}  other.whl")
+
+
+def test_prebuilt_native_update_restores_old_extension_after_failed_verification(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    root = tmp_path
+    venv = root / ".venv"
+    python = venv / "Scripts" / "python.exe"
+    module = venv / "Lib" / "site-packages" / "_swarmatlas_native.abi3.pyd"
+    python.parent.mkdir(parents=True)
+    module.parent.mkdir(parents=True)
+    python.write_bytes(b"python")
+    module.write_bytes(b"previous-working-extension")
+
+    def fake_download(_url: str, destination: Path, _maximum: int) -> None:
+        destination.write_bytes(b"wheel-or-manifest")
+
+    monkeypatch.setattr("update_project.download_limited_asset", fake_download)
+    monkeypatch.setattr("update_project.verify_native_wheel", lambda *_args: None)
+
+    def fake_run(command, **kwargs):
+        command = [str(part) for part in command]
+        if "-c" in command:
+            script = command[-1]
+            if "find_spec" in script:
+                return subprocess.CompletedProcess(command, 0, stdout=str(module), stderr="")
+            if "capabilities" in script:
+                module.write_bytes(b"broken-new-extension")
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="import failed")
+        if "pip" in command:
+            module.write_bytes(b"new-extension")
+            return subprocess.CompletedProcess(command, 0)
+        raise AssertionError(f"Unexpected updater command: {command}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="did not pass its import check"):
+        install_prebuilt_native(root, python)
+
+    assert module.read_bytes() == b"previous-working-extension"
 
 
 def test_updater_rebuilds_installed_native_extension_when_toolchain_exists(
