@@ -26,6 +26,7 @@ from PySide6.QtNetwork import (
 from .collector import NetworkWorker, available_interfaces
 from .config import AppConfig, app_data_dir
 from .i18n import tr, translate_status
+from .map_geometry import build_boundary_paths
 from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
 from .utils import format_bytes, format_rate
 
@@ -500,25 +501,7 @@ class WorldMap(QWidget):
         countries: list[list[tuple[float, float]]],
         regions: list[list[tuple[float, float]]],
     ) -> None:
-        country_path = QPainterPath()
-        country_path.setFillRule(Qt.FillRule.OddEvenFill)
-        for ring in countries:
-            if len(ring) < 3:
-                continue
-            country_path.moveTo(self._normalized_point(*ring[0]))
-            for longitude, latitude in ring[1:]:
-                country_path.lineTo(self._normalized_point(longitude, latitude))
-            country_path.closeSubpath()
-
-        region_path = QPainterPath()
-        for ring in regions:
-            if len(ring) < 2:
-                continue
-            region_path.moveTo(self._normalized_point(*ring[0]))
-            for longitude, latitude in ring[1:]:
-                region_path.lineTo(self._normalized_point(longitude, latitude))
-            region_path.closeSubpath()
-
+        country_path, region_path = build_boundary_paths(countries, regions)
         self.set_boundary_paths(country_path, region_path)
 
     def set_boundary_paths(self, countries: QPainterPath, regions: QPainterPath) -> None:
@@ -1448,9 +1431,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(translate_status(status, self.current_language))
 
     def _set_map_boundaries(self, countries: object, regions: object) -> None:
-        if not isinstance(countries, list) or not isinstance(regions, list):
+        if not isinstance(countries, QPainterPath) or not isinstance(regions, QPainterPath):
             return
-        self.world_map.set_boundaries(countries, regions)
+        self.world_map.set_boundary_paths(countries, regions)
         self._saved_country_path = QPainterPath(self.world_map.country_path)
         self._saved_region_path = QPainterPath(self.world_map.region_path)
         if self._map_dialog is not None:
