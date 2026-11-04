@@ -245,6 +245,67 @@ def refresh_dependencies(root: Path) -> bool:
     return process.returncode == 0
 
 
+
+def refresh_native_extension(root: Path) -> bool:
+    """Rebuild Rust only when it was already enabled by the user."""
+    venv_python = root / ".venv" / "Scripts" / "python.exe"
+    scripts = root / ".venv" / "Scripts"
+    maturin = scripts / "maturin.exe"
+    if not venv_python.is_file():
+        return True
+
+    probe = subprocess.run(
+        [
+            str(venv_python),
+            "-c",
+            "import importlib.util,sys; "
+            "sys.exit(0 if importlib.util.find_spec('_swarmatlas_native') else 1)",
+        ],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode != 0:
+        say("[Updater] Rust core is not installed; Python collector remains selected.")
+        return True
+
+    cargo = shutil.which("cargo")
+    rustc = shutil.which("rustc")
+    if not cargo or not rustc:
+        say("[WARNING] A Rust extension is installed, but cargo/rustc is unavailable.")
+        say("[WARNING] Its existing binary was preserved; run build_native.bat to rebuild it.")
+        return True
+
+    if not maturin.is_file():
+        say("[Updater] Installing the pinned Rust build frontend...")
+        install = subprocess.run(
+            [str(venv_python), "-m", "pip", "install", "maturin==1.16.0"],
+            cwd=str(root),
+            text=True,
+        )
+        if install.returncode != 0 or not maturin.is_file():
+            say("[WARNING] Could not prepare maturin; the existing Rust binary was preserved.")
+            return True
+
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(root / ".venv")
+    env["PATH"] = str(scripts) + os.pathsep + env.get("PATH", "")
+
+    say("[Updater] Rebuilding the already-installed Rust monitoring core...")
+    build = subprocess.run(
+        [str(maturin), "develop", "--release"],
+        cwd=str(root / "native"),
+        env=env,
+        text=True,
+    )
+    if build.returncode != 0:
+        say("[WARNING] Rust rebuild did not complete; the previous native binary was preserved.")
+        say("[WARNING] Python and the current installed Rust extension remain available.")
+        return True
+
+    say("[Updater] Rust monitoring core rebuilt successfully.")
+    return True
+
 def main() -> int:
     root = Path(__file__).resolve().parent
     if sys.version_info < (3, 11):
@@ -272,6 +333,8 @@ def main() -> int:
             say("[ERROR] Source files were updated, but dependency refresh failed.")
             say("[ERROR] Check the pip output above and run the updater again when online.")
             return 2
+
+        refresh_native_extension(root)
 
         say("[Updater] Update completed successfully.")
         say("[Updater] Local settings, databases, logs and .venv were preserved.")
