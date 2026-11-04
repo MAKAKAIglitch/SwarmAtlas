@@ -57,7 +57,7 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 - Selected MMDB readers are opened and warmed on a background worker during startup; the UI remains responsive while they initialize.
 - SQLite uses WAL mode and normal synchronous mode.
 
-These are conservative defaults, not a promise of zero CPU usage. Actual overhead depends on the number of active sockets, Windows version, and hardware.
+These are conservative defaults, not a promise of zero CPU usage. Actual overhead depends on the number of active sockets, Windows version, and hardware. The native collector reduces Python-side TCP-table parsing, but no CPU or RAM improvement percentage is claimed until it is benchmarked on real workloads.
 
 ## Requirements
 
@@ -107,7 +107,7 @@ To build the optional Rust module:
 2. Run `build_native.bat` from the SwarmAtlas folder.
 3. Restart SwarmAtlas.
 
-The build uses PyO3 0.30.1 and maturin 1.16.0. It compiles locally for the current Windows/Python environment; it does not install drivers or alter Windows networking. GitHub Actions also builds and tests a Windows x64 wheel and retains it as a workflow artifact.
+The build uses PyO3 0.30.1 with the stable `abi3-py311` ABI and maturin 1.16.0. The Windows wheel is therefore compatible with regular CPython 3.11 and newer, instead of being tied to the CI Python 3.12 minor version. It compiles locally for the current Windows/Python environment; it does not install drivers or alter Windows networking. GitHub Actions also builds and tests a Windows x64 wheel and retains it as a workflow artifact.
 
 Rust is being introduced incrementally. Interface byte counters, SQLite, UI and GeoIP orchestration remain Python-side for now. Per-IP byte accounting is not implemented by this TCP/UDP table reader.
 
