@@ -258,3 +258,26 @@ def test_process_names_are_resolved_in_one_cached_process_table_pass(monkeypatch
     assert collector._process_name(101) == "browser.exe"
     assert collector._process_name(202) == "game.exe"
     assert set(collector._PROCESS_NAME_CACHE) == {101, 202}
+
+
+
+def test_geoip_enrichment_looks_up_each_unique_ip_once() -> None:
+    class FakeLocator:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def lookup(self, ip: str) -> dict[str, object]:
+            self.calls.append(ip)
+            return {"country": "United States", "latitude": 37.4, "longitude": -122.0}
+
+    locator = FakeLocator()
+    endpoints = [
+        {"ip": "8.8.8.8", "port": 443},
+        {"ip": "8.8.8.8", "port": 8443},
+        {"ip": "1.1.1.1", "port": 443},
+    ]
+
+    collector._enrich_endpoints_with_geoip(endpoints, locator)  # type: ignore[arg-type]
+
+    assert locator.calls == ["8.8.8.8", "1.1.1.1"]
+    assert all(item["country"] == "United States" for item in endpoints)
