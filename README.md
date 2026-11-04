@@ -32,6 +32,8 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 | Offline country/city lookup using local GeoIP | Optional |
 | World map with approximate endpoint locations | Implemented when GeoIP is configured |
 | Per-destination / per-country byte totals | Not implemented |
+| Russian and English interface | Implemented (Russian by default) |
+| Dark and light themes | Implemented; preference saved locally |
 | Torrent-client integrations | Planned |
 
 **Measurement accuracy:** interface counters give accurate byte totals for the selected adapter, but they do not identify which remote IP received each byte. The current prototype separately discovers active remote IP/port endpoints; it does not assign interface bytes to those endpoints. Per-IP and per-country GB totals are deliberately not displayed until a trustworthy flow-accounting source is implemented.
@@ -75,6 +77,10 @@ The manual command does not use the Windows launcher's log capture.
 For development dependencies:
 
     .\.venv\Scripts\python -m pip install -e ".[geoip,dev]"
+
+## Appearance and language
+
+The desktop app opens in Russian with the dark theme by default. Use the controls in the left sidebar to switch between Russian and English or between dark and light themes. Both preferences are saved locally in `settings.json` and restored on the next launch.
 
 ## GeoIP setup
 
