@@ -126,6 +126,7 @@ class RemoteGeoLocator:
         self._stop = threading.Event()
         self._usage_day = datetime.now(timezone.utc).date().isoformat()
         self._usage_count = 0
+        self._quota_reached = False
         self._usage_path = app_data_dir() / "geoip_provider_usage.json"
         self._load_usage()
         self._thread: threading.Thread | None = None
@@ -217,7 +218,7 @@ class RemoteGeoLocator:
             if cached is not None:
                 self._cache.move_to_end(ip)
                 return dict(cached)
-            if ip not in self._pending and self._thread is not None and not self._stop.is_set():
+            if ip not in self._pending and self._thread is not None and not self._stop.is_set() and not self._quota_reached:
                 try:
                     self._queue.put_nowait(ip)
                     self._pending.add(ip)
@@ -278,9 +279,11 @@ class RemoteGeoLocator:
                     break
                 if self._usage_day != datetime.now(timezone.utc).date().isoformat():
                     self._usage_count = 0
+                    self._quota_reached = False
                     self._usage_day = datetime.now(timezone.utc).date().isoformat()
                 daily_limit = self._daily_limit()
                 if daily_limit is not None and self._usage_count >= daily_limit:
+                    self._quota_reached = True
                     self.status = f"{PROVIDER_NAMES[self.provider]} daily free lookup budget reached ({daily_limit})"
                     continue
                 self._usage_count += 1
