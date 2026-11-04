@@ -193,6 +193,7 @@ class GeoIPProviderDialog(QDialog):
         ("ipdata", "provider_ipdata"),
         ("ipapi-is", "provider_ipapi_is"),
         ("ipinfo-lite", "provider_ipinfo"),
+        ("ip2location", "provider_ip2location"),
         ("2ip", "provider_2ip"),
     )
 
@@ -262,7 +263,7 @@ class GeoIPProviderDialog(QDialog):
             self.api_keys[self._active_provider] = self.api_key_input.text().strip()
             self._active_provider = provider
             self.api_key_input.setText(self.api_keys.get(provider, ""))
-        accepts_token = provider in {"ipapi-is", "ipinfo-lite", "2ip"}
+        accepts_token = provider in {"ipapi-is", "ipinfo-lite", "ip2location", "2ip"}
         self.key_label.setVisible(accepts_token)
         self.api_key_input.setVisible(accepts_token)
         self.api_key_input.setEnabled(accepts_token)
