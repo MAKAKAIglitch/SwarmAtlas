@@ -322,6 +322,7 @@ class MainWindow(QMainWindow):
         self.palette = get_palette(self.current_theme)
         self._mica_attempted = False
         self._mica_applied = False
+        self._apply_theme()
         self.worker = NetworkWorker(self.config)
         self.worker.snapshot_ready.connect(self.update_snapshot)
         self.worker.status_changed.connect(self.update_geo_status)
