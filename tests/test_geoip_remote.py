@@ -204,3 +204,38 @@ def test_ip2location_free_tier_limits_depend_on_key_presence() -> None:
     finally:
         keyless.close()
         keyed.close()
+
+
+def test_ipdata_free_current_response_is_normalized() -> None:
+    result = _normalize(
+        "ipdata",
+        {
+            "ip": "86.128.12.34",
+            "city": "Ely",
+            "region": "England",
+            "country": "GB",
+            "latitude": 52.3996,
+            "longitude": 0.262,
+            "asn": "AS2856",
+            "org": "BTnet",
+            "timezone": "Europe/London",
+        },
+    )
+    assert result["country"] == "GB"
+    assert result["country_code"] == "GB"
+    assert result["city"] == "Ely"
+    assert result["organization"] == "BTnet"
+    assert result["asn"] == 2856
+
+
+def test_ipdata_uses_current_keyless_endpoint_and_optional_key() -> None:
+    keyless = RemoteGeoLocator("ipdata")
+    keyed = RemoteGeoLocator("ipdata", "example-key")
+    try:
+        assert keyless._url("8.8.8.8") == "https://ipdata.free/8.8.8.8"
+        assert keyed._url("8.8.8.8") == "https://ipdata.free/8.8.8.8?api-key=example-key"
+        assert keyless._daily_limit() == 950
+        assert keyed._daily_limit() == 950
+    finally:
+        keyless.close()
+        keyed.close()
