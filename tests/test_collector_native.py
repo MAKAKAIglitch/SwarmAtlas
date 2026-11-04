@@ -16,7 +16,7 @@ def test_minimized_window_polling_profile_reduces_background_work() -> None:
     power_saver = collector.sampling_intervals(True)
 
     assert normal == (1.0, 5.0, 5.0)
-    assert power_saver == (4.0, 20.0, 15.0)
+    assert power_saver == (5.0, 20.0, 15.0)
     assert collector.HISTORY_SAMPLE_INTERVAL_SEC == 10.0
 
 

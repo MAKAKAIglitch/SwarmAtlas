@@ -141,7 +141,7 @@ The prebuilt Rust extension is installed automatically by run_windows.bat when a
 - Theme: System, Dark or Light.
 - Language: System, Русский or English.
 - Network adapter: automatic selection or a specific active interface.
-- When the main window is minimized, the collector automatically switches to a lower-power background cadence: interface counters every 4 seconds, interface checks every 20 seconds and endpoint scans every 15 seconds. Restoring the window immediately returns to the normal 1-second / 5-second cadence. Ten-second history sampling remains enabled.
+- When the main window is minimized, the collector automatically switches to a lower-power background cadence: interface counters every 5 seconds, interface checks every 20 seconds and endpoint scans every 15 seconds. Restoring the window immediately returns to the normal 1-second / 5-second cadence. Ten-second history sampling remains enabled.
 - The live header shows upload and download rates separately.
 - Native Windows 11 Mica backdrop is supported on Windows 11 22H2+.
 
