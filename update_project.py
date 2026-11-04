@@ -130,29 +130,49 @@ def stage_archive(archive_path: Path, stage: Path) -> Path:
 
 def overlay_update(source: Path, root: Path, backup: Path) -> int:
     updated = 0
+    changed: list[tuple[Path, Path | None]] = []
     files = sorted(path for path in source.rglob("*") if path.is_file())
-    for source_file in files:
-        relative = source_file.relative_to(source)
-        if should_skip(relative):
-            continue
-        destination = root / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        for source_file in files:
+            relative = source_file.relative_to(source)
+            if should_skip(relative):
+                continue
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
 
-        if destination.is_file() and destination.read_bytes() == source_file.read_bytes():
-            continue
+            if destination.is_file() and destination.read_bytes() == source_file.read_bytes():
+                continue
 
-        backup_file = backup / relative
-        if destination.is_file():
-            backup_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(destination, backup_file)
+            backup_file: Path | None = None
+            if destination.is_file():
+                backup_file = backup / relative
+                backup_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(destination, backup_file)
 
-        temporary = destination.with_name(destination.name + ".swarmatlas-update-tmp")
-        shutil.copy2(source_file, temporary)
-        os.replace(temporary, destination)
-        updated += 1
+            temporary = destination.with_name(destination.name + ".swarmatlas-update-tmp")
+            try:
+                shutil.copy2(source_file, temporary)
+                os.replace(temporary, destination)
+            finally:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
+            changed.append((destination, backup_file))
+            updated += 1
+    except Exception:
+        # Restore files already replaced if a later file fails.
+        for destination, backup_file in reversed(changed):
+            try:
+                if backup_file is None:
+                    destination.unlink(missing_ok=True)
+                else:
+                    shutil.copy2(backup_file, destination)
+            except OSError:
+                pass
+        raise
     return updated
-
 
 def update_git_checkout(root: Path) -> bool:
     git_dir = root / ".git"
@@ -180,7 +200,7 @@ def update_git_checkout(root: Path) -> bool:
 
     say("[Updater] Clean Git checkout detected; updating with fast-forward only...")
     fetch = subprocess.run(
-        [git, "-C", str(root), "fetch", "--ff-only", "origin", BRANCH],
+        [git, "-C", str(root), "fetch", "origin", BRANCH],
         text=True,
     )
     if fetch.returncode:
@@ -212,6 +232,9 @@ def refresh_dependencies(root: Path) -> bool:
 
 def main() -> int:
     root = Path(__file__).resolve().parent
+    if sys.version_info < (3, 11):
+        say("[ERROR] The updater requires Python 3.11 or newer.")
+        return 1
     say("SwarmAtlas project updater")
     say(f"[Updater] Project folder: {root}")
     say("[Updater] Close SwarmAtlas before continuing.")
