@@ -352,6 +352,13 @@ class NetworkWorker(QThread):
         self._stop_event.set()
         return self.wait(timeout_ms)
 
+    def restart(self) -> None:
+        """Restart a finished worker after a user-requested storage move."""
+        if self.isRunning():
+            return
+        self._stop_event.clear()
+        self.start()
+
     def run(self) -> None:
         store: Store | None = None
         locator: GeoLocator | None = None
