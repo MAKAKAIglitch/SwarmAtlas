@@ -286,6 +286,7 @@ def test_process_names_are_resolved_in_one_cached_process_table_pass(monkeypatch
 
 
 def test_native_interface_snapshot_is_used_without_psutil_enumeration(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "_NATIVE_INTERFACE_FAILED", False)
     monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
     monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", True)
     expected = {
@@ -329,7 +330,42 @@ def test_interface_snapshot_falls_back_to_psutil(monkeypatch) -> None:
     }
 
 
+def test_failed_native_interface_backend_uses_psutil_fallback_once(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
+    monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", True)
+    monkeypatch.setattr(collector, "_NATIVE_INTERFACE_FAILED", False)
+    calls: list[int] = []
+
+    def fail_native():
+        calls.append(1)
+        raise OSError("native interface API unavailable")
+
+    monkeypatch.setattr(collector, "list_network_interfaces", fail_native)
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_if_stats",
+        lambda: {"Ethernet": SimpleNamespace(isup=True)},
+    )
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_io_counters",
+        lambda pernic=True: {
+            "Ethernet": SimpleNamespace(bytes_sent=10, bytes_recv=20),
+        },
+    )
+
+    first = collector._read_interface_snapshot()
+    second = collector._read_interface_snapshot()
+
+    assert calls == [1]
+    assert first == second == {
+        "Ethernet": {"is_up": True, "bytes_sent": 10, "bytes_recv": 20}
+    }
+    assert collector._NATIVE_INTERFACE_FAILED is True
+
+
 def test_process_name_cache_uses_native_batch_lookup(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "_NATIVE_PROCESS_LOOKUP_FAILED", False)
     monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
     monkeypatch.setattr(collector, "NATIVE_PROCESS_NAMES", True)
     calls: list[list[int]] = []

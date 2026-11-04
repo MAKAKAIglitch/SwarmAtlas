@@ -49,6 +49,8 @@ VIRTUAL_MARKERS = (
     "wintun", "wireguard", "zerotier", "tailscale", "tap-", "docker", "wsl",
 )
 _PROCESS_NAME_CACHE: dict[int, tuple[float, str | None]] = {}
+_NATIVE_INTERFACE_FAILED = False
+_NATIVE_PROCESS_LOOKUP_FAILED = False
 
 
 def should_use_power_saver(*, application_active: bool, minimized: bool) -> bool:
@@ -75,12 +77,14 @@ def _read_interface_snapshot(
     interface_stats: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Read all adapter state and counters once, preferring the compact Rust API."""
-    if NATIVE_AVAILABLE and NATIVE_INTERFACE_COUNTERS:
+    global _NATIVE_INTERFACE_FAILED
+    if NATIVE_AVAILABLE and NATIVE_INTERFACE_COUNTERS and not _NATIVE_INTERFACE_FAILED:
         try:
             native_snapshot = list_network_interfaces()
             if native_snapshot is not None:
                 return native_snapshot
         except Exception as exc:
+            _NATIVE_INTERFACE_FAILED = True
             _LOGGER.debug(
                 "Native interface snapshot unavailable; using psutil fallback (%s)",
                 type(exc).__name__,
@@ -166,6 +170,7 @@ def _process_name(process_id: int | None) -> str | None:
 
 def _warm_process_name_cache(process_ids: Any) -> None:
     """Resolve only connection-owner PIDs, using Rust when the new core is available."""
+    global _NATIVE_PROCESS_LOOKUP_FAILED
     now = time.monotonic()
     requested: set[int] = set()
     for process_id in process_ids:
@@ -191,10 +196,11 @@ def _warm_process_name_cache(process_ids: Any) -> None:
     if not missing:
         return
 
-    if NATIVE_AVAILABLE and NATIVE_PROCESS_NAMES:
+    if NATIVE_AVAILABLE and NATIVE_PROCESS_NAMES and not _NATIVE_PROCESS_LOOKUP_FAILED:
         try:
             native_names = resolve_process_names(sorted(missing))
         except Exception as exc:
+            _NATIVE_PROCESS_LOOKUP_FAILED = True
             _LOGGER.debug(
                 "Native process lookup unavailable; using psutil fallback (%s)",
                 type(exc).__name__,
@@ -706,7 +712,11 @@ class NetworkWorker(QThread):
                     # The native API returns state and counters together. The
                     # psutil fallback refreshes interface state only at its
                     # slower adapter-check cadence, but counters remain live.
-                    if not (NATIVE_AVAILABLE and NATIVE_INTERFACE_COUNTERS):
+                    if not (
+                        NATIVE_AVAILABLE
+                        and NATIVE_INTERFACE_COUNTERS
+                        and not _NATIVE_INTERFACE_FAILED
+                    ):
                         if (
                             interface_request_changed
                             or interface_check_due
@@ -717,7 +727,7 @@ class NetworkWorker(QThread):
                 except (psutil.Error, OSError) as exc:
                     interface_snapshot = {}
                     connection_status = f"Interface counters unavailable: {exc}"
-                if interface_request_changed or interface_check_due:
+                if interface_snapshot and (interface_request_changed or interface_check_due):
                     try:
                         resolved = self._resolve_interface(requested, interface_snapshot)
                     except (psutil.Error, OSError):
