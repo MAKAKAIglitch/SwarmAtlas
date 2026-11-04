@@ -795,8 +795,8 @@ class WorldMapDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(1450, 850)
-        self.setMinimumSize(900, 600)
+        self.resize(1080, 920)
+        self.setMinimumSize(820, 720)
 
         palette = source_map.palette_colors
         layout = QVBoxLayout(self)
@@ -1383,11 +1383,19 @@ class MainWindow(QMainWindow):
         name, url = sources.get(self.config.geoip_provider, sources["dbip"])
         source_link = f'<a href="{url}">{name}</a>'
         natural_earth = '<a href="https://www.naturalearthdata.com/">Natural Earth</a>'
+        osm_attribution = (
+            '<a href="https://www.openstreetmap.org/copyright">'
+            "© OpenStreetMap contributors</a>"
+        )
         if self.config.geoip_provider in {"ipdata", "ip2location"}:
             return self.t(
                 f"map_attribution_{self.config.geoip_provider}"
-            ).format(boundaries=natural_earth)
-        return self.t("map_attribution").format(source=source_link, boundaries=natural_earth)
+            ).format(boundaries=natural_earth, osm=osm_attribution)
+        return self.t("map_attribution").format(
+            source=source_link,
+            boundaries=natural_earth,
+            osm=osm_attribution,
+        )
 
     def open_map_dialog(self) -> None:
         attribution = self._map_attribution_html()
