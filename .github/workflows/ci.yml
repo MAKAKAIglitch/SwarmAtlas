@@ -14,7 +14,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install "maturin==1.16.0"
+      - name: Test the Rust core
+        run: cargo test
+        working-directory: native
+      - name: Build the Windows Rust extension wheel
+        run: maturin build --release --out dist
+        working-directory: native
+      - name: Install the compiled Rust extension
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem native/dist/*.whl | Select-Object -First 1
+          if ($null -eq $wheel) { throw "Native wheel was not created." }
+          python -m pip install $wheel.FullName
+      - name: Verify Windows process ownership APIs
+        run: python -c "import _swarmatlas_native as n; print(n.capabilities()); print('TCP rows:', len(n.list_tcp_connections())); print('UDP bindings:', len(n.list_udp_bindings()))"
       - run: python -m pytest
       - run: python -m compileall run_windows.py update_project.py src
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swarmatlas-native-win-x64
+          path: native/dist/*.whl
+          if-no-files-found: error
+          retention-days: 14
