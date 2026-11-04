@@ -8,3 +8,7 @@ pub(crate) fn list_tcp_connections(_limit: usize) -> Result<Vec<TcpConnection>, 
 pub(crate) fn list_udp_bindings(_limit: usize) -> Result<Vec<UdpBinding>, String> {
     Err("The native SwarmAtlas monitor currently supports Windows only".to_owned())
 }
+
+pub(crate) fn count_udp_bindings() -> Result<usize, String> {
+    Err("The native SwarmAtlas monitor currently supports Windows only".to_owned())
+}
