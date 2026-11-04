@@ -393,8 +393,8 @@ class Store:
                     INSERT INTO destinations (
                         ip, port, protocol, process_id, local_port, process_name,
                         connection_state, first_seen, last_seen, country_code, country,
-                        region, city, asn, organization, isp, latitude, longitude, active
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        region, city, asn, organization, isp, latitude, longitude
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(ip, port, protocol, process_id) DO UPDATE SET
                         last_seen = excluded.last_seen,
                         local_port = excluded.local_port,
@@ -408,8 +408,7 @@ class Store:
                         organization = COALESCE(excluded.organization, destinations.organization),
                         isp = COALESCE(excluded.isp, destinations.isp),
                         latitude = COALESCE(excluded.latitude, destinations.latitude),
-                        longitude = COALESCE(excluded.longitude, destinations.longitude),
-                        active = 1
+                        longitude = COALESCE(excluded.longitude, destinations.longitude)
                     """,
                     parameters,
                 )
