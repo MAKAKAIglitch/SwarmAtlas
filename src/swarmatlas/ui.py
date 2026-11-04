@@ -3,13 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, Signal, Slot
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QTableWidgetItem, QToolTip, QVBoxLayout, QWidget,
 )
 
 from .collector import NetworkWorker, available_interfaces
@@ -240,14 +240,27 @@ class TrafficChart(QWidget):
 
 
 class WorldMap(QWidget):
-    """Lightweight schematic map; points are approximate GeoIP coordinates."""
+    """Interactive offline world map with local country and first-level region borders."""
+
+    location_selected = Signal(dict)
 
     def __init__(self, palette: dict[str, str], empty_text: str):
         super().__init__()
         self.setMinimumHeight(275)
+        self.setMouseTracking(True)
         self.palette_colors = palette
         self.empty_text = empty_text
         self.locations: list[dict[str, Any]] = []
+        self.country_path = QPainterPath()
+        self.region_path = QPainterPath()
+        self._has_boundaries = False
+        self._zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+        self._drag_start: QPointF | None = None
+        self._drag_origin = QPointF(0.0, 0.0)
+        self._dragged = False
+        self._hovered_index: int | None = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
         self.palette_colors = palette
@@ -255,67 +268,341 @@ class WorldMap(QWidget):
         self.update()
 
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
-        self.locations = [
-            item for item in locations
-            if item.get("latitude") is not None and item.get("longitude") is not None
-        ]
+        valid: list[dict[str, Any]] = []
+        for item in locations:
+            try:
+                latitude = float(item["latitude"])
+                longitude = float(item["longitude"])
+            except (KeyError, TypeError, ValueError, OverflowError):
+                continue
+            if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+                continue
+            valid.append(item)
+        self.locations = valid
         self.update()
 
-    def _point(self, lon: float, lat: float, rect: Any) -> QPointF:
-        x = rect.left() + (lon + 180.0) / 360.0 * rect.width()
-        y = rect.top() + (90.0 - lat) / 180.0 * rect.height()
-        return QPointF(x, y)
+    @staticmethod
+    def _normalized_point(longitude: float, latitude: float) -> QPointF:
+        return QPointF((longitude + 180.0) / 360.0, (90.0 - latitude) / 180.0)
+
+    def set_boundaries(
+        self,
+        countries: list[list[tuple[float, float]]],
+        regions: list[list[tuple[float, float]]],
+    ) -> None:
+        country_path = QPainterPath()
+        country_path.setFillRule(Qt.FillRule.OddEvenFill)
+        for ring in countries:
+            if len(ring) < 3:
+                continue
+            country_path.moveTo(self._normalized_point(*ring[0]))
+            for longitude, latitude in ring[1:]:
+                country_path.lineTo(self._normalized_point(longitude, latitude))
+            country_path.closeSubpath()
+
+        region_path = QPainterPath()
+        for ring in regions:
+            if len(ring) < 3:
+                continue
+            region_path.moveTo(self._normalized_point(*ring[0]))
+            for longitude, latitude in ring[1:]:
+                region_path.lineTo(self._normalized_point(longitude, latitude))
+            region_path.closeSubpath()
+
+        self.set_boundary_paths(country_path, region_path)
+
+    def set_boundary_paths(self, countries: QPainterPath, regions: QPainterPath) -> None:
+        self.country_path = QPainterPath(countries)
+        self.region_path = QPainterPath(regions)
+        self._has_boundaries = not self.country_path.isEmpty()
+        self.update()
+
+    def copy_boundaries_from(self, other: "WorldMap") -> None:
+        self.set_boundary_paths(other.country_path, other.region_path)
+
+    def _map_rect(self) -> QRectF:
+        area = QRectF(self.rect()).adjusted(12, 8, -12, -8)
+        width = min(area.width(), area.height() * 2.0)
+        height = width / 2.0
+        return QRectF(
+            area.center().x() - width / 2.0,
+            area.center().y() - height / 2.0,
+            width,
+            height,
+        )
+
+    def _screen_point(self, longitude: float, latitude: float) -> QPointF:
+        rect = self._map_rect()
+        normalized = self._normalized_point(longitude, latitude)
+        return QPointF(
+            rect.center().x() + self._pan.x()
+            + (normalized.x() - 0.5) * rect.width() * self._zoom,
+            rect.center().y() + self._pan.y()
+            + (normalized.y() - 0.5) * rect.height() * self._zoom,
+        )
+
+    def _zoom_at(self, position: QPointF, factor: float) -> None:
+        old_zoom = self._zoom
+        new_zoom = max(1.0, min(16.0, old_zoom * factor))
+        if abs(new_zoom - old_zoom) < 0.0001:
+            return
+
+        center = self._map_rect().center()
+        anchored_x = (position.x() - center.x() - self._pan.x()) / old_zoom
+        anchored_y = (position.y() - center.y() - self._pan.y()) / old_zoom
+        self._zoom = new_zoom
+        self._pan = QPointF(
+            position.x() - center.x() - anchored_x * new_zoom,
+            position.y() - center.y() - anchored_y * new_zoom,
+        )
+        self.update()
+
+    def zoom_in(self) -> None:
+        self._zoom_at(self._map_rect().center(), 1.35)
+
+    def zoom_out(self) -> None:
+        self._zoom_at(self._map_rect().center(), 1.0 / 1.35)
+
+    def reset_view(self) -> None:
+        self._zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+        self.update()
+
+    def _nearest_location(self, position: QPointF) -> int | None:
+        nearest_index: int | None = None
+        nearest_distance = 13.0
+        for index, item in enumerate(self.locations):
+            point = self._screen_point(float(item["longitude"]), float(item["latitude"]))
+            dx = point.x() - position.x()
+            dy = point.y() - position.y()
+            distance = (dx * dx + dy * dy) ** 0.5
+            if distance < nearest_distance:
+                nearest_index = index
+                nearest_distance = distance
+        return nearest_index
+
+    @staticmethod
+    def _location_text(item: dict[str, Any]) -> str:
+        details = [
+            str(item.get("city") or ""),
+            str(item.get("region") or ""),
+            str(item.get("country") or ""),
+        ]
+        location = ", ".join(value for value in details if value)
+        return f"{item.get('ip', '')} · {location}" if location else str(item.get("ip", ""))
 
     def paintEvent(self, event: Any) -> None:
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        area = self.rect().adjusted(12, 8, -12, -8)
+        area = self.rect().adjusted(8, 6, -8, -6)
         colors = self.palette_colors
+        painter.fillRect(area, QColor(colors["surface_alt"]))
 
-        painter.setPen(QPen(QColor(colors["grid"]), 1))
-        for lon in (-120, -60, 0, 60, 120):
-            x = self._point(lon, 0, area).x()
-            painter.drawLine(QPointF(x, area.top()), QPointF(x, area.bottom()))
-        for lat in (-45, 0, 45):
-            y = self._point(0, lat, area).y()
-            painter.drawLine(QPointF(area.left(), y), QPointF(area.right(), y))
+        map_rect = self._map_rect()
+        painter.save()
+        painter.setClipRect(area)
+        painter.translate(
+            map_rect.center().x() + self._pan.x(),
+            map_rect.center().y() + self._pan.y(),
+        )
+        painter.scale(
+            map_rect.width() * self._zoom,
+            map_rect.height() * self._zoom,
+        )
+        painter.translate(-0.5, -0.5)
 
-        continents = [
-            [(-168, 70), (-145, 72), (-125, 55), (-110, 50), (-95, 20), (-80, 8), (-78, 28), (-60, 48), (-82, 60), (-105, 72), (-135, 73)],
-            [(-82, 12), (-65, 8), (-50, -5), (-45, -25), (-58, -55), (-72, -35), (-78, -5)],
-            [(-12, 72), (35, 70), (70, 55), (105, 58), (145, 48), (165, 62), (178, 48), (150, 20), (120, 5), (100, 10), (80, -5), (55, 10), (42, 32), (20, 35), (5, 55)],
-            [(-18, 35), (12, 37), (38, 20), (48, 0), (35, -35), (18, -35), (5, -5), (-10, 10)],
-            [(112, -12), (153, -10), (155, -40), (132, -45), (114, -30)],
-            [(-52, 82), (-25, 80), (-38, 60)],
-        ]
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(colors["land"]))
-        for polygon in continents:
-            path = QPainterPath()
-            for index, (lon, lat) in enumerate(polygon):
-                point = self._point(lon, lat, area)
-                if index == 0:
-                    path.moveTo(point)
-                else:
-                    path.lineTo(point)
-            path.closeSubpath()
-            painter.drawPath(path)
+        if self._has_boundaries:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors["land"]))
+            painter.drawPath(self.country_path)
+
+            country_pen = QPen(QColor(colors["muted"]), 0.8)
+            country_pen.setCosmetic(True)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(country_pen)
+            painter.drawPath(self.country_path)
+
+            region_pen = QPen(QColor(colors["line"]), 0.55)
+            region_pen.setCosmetic(True)
+            painter.setPen(region_pen)
+            painter.drawPath(self.region_path)
+        else:
+            continents = [
+                [(-168, 70), (-145, 72), (-125, 55), (-110, 50), (-95, 20), (-80, 8), (-78, 28), (-60, 48), (-82, 60), (-105, 72), (-135, 73)],
+                [(-82, 12), (-65, 8), (-50, -5), (-45, -25), (-58, -55), (-72, -35), (-78, -5)],
+                [(-12, 72), (35, 70), (70, 55), (105, 58), (145, 48), (165, 62), (178, 48), (150, 20), (120, 5), (100, 10), (80, -5), (55, 10), (42, 32), (20, 35), (5, 55)],
+                [(-18, 35), (12, 37), (38, 20), (48, 0), (35, -35), (18, -35), (5, -5), (-10, 10)],
+                [(112, -12), (153, -10), (155, -40), (132, -45), (114, -30)],
+                [(-52, 82), (-25, 80), (-38, 60)],
+            ]
+            painter.setPen(QPen(QColor(colors["line"]), 0.001))
+            painter.setBrush(QColor(colors["land"]))
+            for polygon in continents:
+                path = QPainterPath()
+                for index, (longitude, latitude) in enumerate(polygon):
+                    point = self._normalized_point(longitude, latitude)
+                    if index == 0:
+                        path.moveTo(point)
+                    else:
+                        path.lineTo(point)
+                path.closeSubpath()
+                painter.drawPath(path)
+
+        grid_pen = QPen(QColor(colors["grid"]), 0.8)
+        grid_pen.setCosmetic(True)
+        painter.setPen(grid_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for longitude in (-120, -60, 0, 60, 120):
+            x = (longitude + 180.0) / 360.0
+            painter.drawLine(QPointF(x, 0.0), QPointF(x, 1.0))
+        for latitude in (-60, -30, 0, 30, 60):
+            y = (90.0 - latitude) / 180.0
+            painter.drawLine(QPointF(0.0, y), QPointF(1.0, y))
+        painter.restore()
 
         if not self.locations:
             painter.setPen(QColor(colors["muted"]))
             painter.drawText(
-                area.adjusted(0, area.height() - 34, 0, 0),
+                area.adjusted(0, area.height() - 32, 0, 0),
                 Qt.AlignmentFlag.AlignCenter,
                 self.empty_text,
             )
+        else:
+            for index, item in enumerate(self.locations):
+                point = self._screen_point(
+                    float(item["longitude"]),
+                    float(item["latitude"]),
+                )
+                if not area.adjusted(-8, -8, 8, 8).contains(point):
+                    continue
+                painter.setPen(QPen(QColor(colors["accent"]), 1))
+                painter.setBrush(QColor(colors["accent_light"]))
+                radius = 7.0 if index == self._hovered_index else 4.8
+                painter.drawEllipse(point, radius, radius)
+
+        if self._zoom > 1.01:
+            painter.setPen(QColor(colors["muted"]))
+            painter.drawText(
+                area.adjusted(0, 6, -8, 0),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+                f"{self._zoom:.1f}×",
+            )
+
+    def wheelEvent(self, event: Any) -> None:
+        delta = event.angleDelta().y()
+        if delta:
+            self._zoom_at(event.position(), 1.2 if delta > 0 else (1.0 / 1.2))
+        event.accept()
+
+    def mousePressEvent(self, event: Any) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = event.position()
+            self._drag_origin = QPointF(self._pan)
+            self._dragged = False
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: Any) -> None:
+        if self._drag_start is not None:
+            delta = event.position() - self._drag_start
+            if abs(delta.x()) + abs(delta.y()) > 3.0:
+                self._dragged = True
+            if self._dragged:
+                self._pan = QPointF(
+                    self._drag_origin.x() + delta.x(),
+                    self._drag_origin.y() + delta.y(),
+                )
+                self.update()
+            event.accept()
             return
 
-        for item in self.locations:
-            point = self._point(float(item["longitude"]), float(item["latitude"]), area)
-            painter.setPen(QPen(QColor(colors["accent"]), 1))
-            painter.setBrush(QColor(colors["accent_light"]))
-            painter.drawEllipse(point, 5.5, 5.5)
+        hovered = self._nearest_location(event.position())
+        if hovered != self._hovered_index:
+            self._hovered_index = hovered
+            self.setToolTip(
+                self._location_text(self.locations[hovered]) if hovered is not None else ""
+            )
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: Any) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._drag_start is not None:
+            if not self._dragged:
+                selected = self._nearest_location(event.position())
+                if selected is not None:
+                    item = self.locations[selected]
+                    self.location_selected.emit(dict(item))
+                    QToolTip.showText(
+                        event.globalPosition().toPoint(),
+                        self._location_text(item),
+                        self,
+                    )
+            self._drag_start = None
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class WorldMapDialog(QDialog):
+    def __init__(
+        self,
+        source_map: WorldMap,
+        title: str,
+        attribution: str,
+        language: str,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(1450, 850)
+        self.setMinimumSize(900, 600)
+
+        palette = source_map.palette_colors
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        toolbar = QHBoxLayout()
+        toolbar.addWidget(make_label(title, 17, palette["text"], 700))
+        toolbar.addStretch(1)
+
+        self.zoom_out_button = QPushButton("−")
+        self.zoom_in_button = QPushButton("+")
+        self.reset_button = QPushButton(tr("map_reset", language))
+        self.zoom_out_button.setToolTip(tr("map_zoom_out", language))
+        self.zoom_in_button.setToolTip(tr("map_zoom_in", language))
+        for button in (self.zoom_out_button, self.zoom_in_button, self.reset_button):
+            button.setObjectName("quiet")
+        toolbar.addWidget(self.zoom_out_button)
+        toolbar.addWidget(self.zoom_in_button)
+        toolbar.addWidget(self.reset_button)
+        layout.addLayout(toolbar)
+
+        self.map_widget = WorldMap(palette, source_map.empty_text)
+        self.map_widget.copy_boundaries_from(source_map)
+        self.map_widget.set_locations(source_map.locations)
+        self.map_widget.setMinimumHeight(470)
+        layout.addWidget(self.map_widget, 1)
+
+        self.attribution = QLabel(attribution)
+        self.attribution.setTextFormat(Qt.TextFormat.RichText)
+        self.attribution.setOpenExternalLinks(True)
+        self.attribution.setStyleSheet(f"color: {palette['muted']}; background: transparent;")
+        layout.addWidget(self.attribution)
+
+        self.zoom_out_button.clicked.connect(self.map_widget.zoom_out)
+        self.zoom_in_button.clicked.connect(self.map_widget.zoom_in)
+        self.reset_button.clicked.connect(self.map_widget.reset_view)
+        self.setStyleSheet(
+            f"QDialog {{ background: {palette['bg']}; color: {palette['text']}; }}"
+            f"QPushButton#quiet {{ background: {palette['surface_alt']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 8px; padding: 7px 12px; }}"
+            f"QPushButton#quiet:hover {{ border-color: {palette['accent']}; }}"
+        )
 
 
 class MainWindow(QMainWindow):
@@ -332,11 +619,16 @@ class MainWindow(QMainWindow):
         self.palette = get_palette(self.current_theme)
         self._mica_attempted = False
         self._mica_applied = False
+        self._map_dialog: WorldMapDialog | None = None
+        self._last_snapshot: dict[str, Any] = {}
+        self._saved_country_path = QPainterPath()
+        self._saved_region_path = QPainterPath()
         self._apply_theme()
         self.worker = NetworkWorker(self.config)
         self.worker.snapshot_ready.connect(self.update_snapshot)
         self.worker.status_changed.connect(self.update_geo_status)
         self.worker.startup_ready.connect(self._on_worker_startup)
+        self.worker.map_data_ready.connect(self._set_map_boundaries)
 
         self._build_ui()
         self._style_hints = QGuiApplication.styleHints()
@@ -389,6 +681,9 @@ class MainWindow(QMainWindow):
         )
 
     def _rebuild_ui(self) -> None:
+        if self._map_dialog is not None:
+            self._map_dialog.close()
+            self._map_dialog = None
         old = self.takeCentralWidget()
         if old is not None:
             old.deleteLater()
@@ -401,6 +696,13 @@ class MainWindow(QMainWindow):
             )
         self._apply_theme()
         self._build_ui()
+        if not self._saved_country_path.isEmpty():
+            self.world_map.set_boundary_paths(
+                self._saved_country_path,
+                self._saved_region_path,
+            )
+        if self._last_snapshot:
+            self.world_map.set_locations(self._last_snapshot.get("active_endpoints", []))
         self._fade_in_rebuilt_ui()
 
     def _fade_in_rebuilt_ui(self) -> None:
@@ -528,10 +830,14 @@ class MainWindow(QMainWindow):
         map_layout.setContentsMargins(18, 16, 18, 14)
         map_heading = QHBoxLayout()
         self.map_title = make_label(self.t("world_activity"), 13, self.palette["text"], 600)
-        self.map_subtitle = make_label(self.t("approx_ip"), 9, self.palette["muted"])
+        self.map_subtitle = make_label(self.t("map_country_region_subtitle"), 9, self.palette["muted"])
         map_heading.addWidget(self.map_title)
         map_heading.addStretch(1)
         map_heading.addWidget(self.map_subtitle)
+        self.map_expand_button = QPushButton(self.t("expand_map"))
+        self.map_expand_button.setObjectName("quiet")
+        self.map_expand_button.clicked.connect(self.open_map_dialog)
+        map_heading.addWidget(self.map_expand_button)
         map_layout.addLayout(map_heading)
         self.world_map = WorldMap(self.palette, self.t("map_empty"))
         map_layout.addWidget(self.world_map)
@@ -553,7 +859,20 @@ class MainWindow(QMainWindow):
         self.country_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.country_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.country_table.setShowGrid(False)
+        self.country_table.setMaximumHeight(118)
         countries_layout.addWidget(self.country_table)
+        self.regions_title = make_label(self.t("top_regions"), 12, self.palette["text"], 600)
+        countries_layout.addWidget(self.regions_title)
+        self.regions_table = QTableWidget(0, 2)
+        self.regions_table.setHorizontalHeaderLabels([self.t("region"), self.t("peers")])
+        self.regions_table.horizontalHeader().setStretchLastSection(False)
+        self.regions_table.setColumnWidth(0, 150)
+        self.regions_table.setColumnWidth(1, 55)
+        self.regions_table.verticalHeader().setVisible(False)
+        self.regions_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.regions_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.regions_table.setShowGrid(False)
+        countries_layout.addWidget(self.regions_table, 1)
         middle.addWidget(countries_card, 3)
         content_layout.addLayout(middle)
 
@@ -672,7 +991,44 @@ class MainWindow(QMainWindow):
     def update_geo_status(self, status: str) -> None:
         self.statusBar().showMessage(translate_status(status, self.current_language))
 
+    def _set_map_boundaries(self, countries: object, regions: object) -> None:
+        if not isinstance(countries, list) or not isinstance(regions, list):
+            return
+        self.world_map.set_boundaries(countries, regions)
+        self._saved_country_path = QPainterPath(self.world_map.country_path)
+        self._saved_region_path = QPainterPath(self.world_map.region_path)
+        if self._map_dialog is not None:
+            self._map_dialog.map_widget.set_boundary_paths(
+                self._saved_country_path,
+                self._saved_region_path,
+            )
+
+    def open_map_dialog(self) -> None:
+        attribution = (
+            self.t("map_attribution")
+            .replace("DB-IP.com", '<a href="https://db-ip.com">DB-IP.com</a>')
+            .replace(
+                "Natural Earth",
+                '<a href="https://www.naturalearthdata.com/">Natural Earth</a>',
+            )
+        )
+        if self._map_dialog is None:
+            self._map_dialog = WorldMapDialog(
+                self.world_map,
+                self.t("world_activity"),
+                attribution,
+                self.current_language,
+                self,
+            )
+        self._map_dialog.map_widget.set_locations(
+            self._last_snapshot.get("active_endpoints", [])
+        )
+        self._map_dialog.show()
+        self._map_dialog.raise_()
+        self._map_dialog.activateWindow()
+
     def update_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self._last_snapshot = snapshot
         upload = int(snapshot.get("upload_total", 0))
         download = int(snapshot.get("download_total", 0))
         up_rate = float(snapshot.get("upload_bps", 0))
@@ -689,7 +1045,10 @@ class MainWindow(QMainWindow):
         self.world_map.set_locations(endpoints)
         self.chart.set_samples(snapshot.get("samples", []))
         self._fill_countries(snapshot.get("countries", []))
+        self._fill_regions(snapshot.get("regions", []))
         self._fill_endpoints(endpoints)
+        if self._map_dialog is not None and self._map_dialog.isVisible():
+            self._map_dialog.map_widget.set_locations(endpoints)
         self.data_note.setText(self.t("data_note_live"))
         native_status = str(snapshot.get("native_status", ""))
         backend_label = (
@@ -709,6 +1068,17 @@ class MainWindow(QMainWindow):
                 name = item.get("country") or item.get("country_code") or self.t("unknown")
                 rows.append([str(name), str(item.get("peers", 0))])
         update_table(self.country_table, rows)
+
+    def _fill_regions(self, regions: list[dict[str, Any]]) -> None:
+        rows: list[list[str]] = []
+        for item in regions[:8]:
+            region = str(item.get("region") or self.t("unknown"))
+            country = str(item.get("country") or "")
+            name = f"{region}, {country}" if country else region
+            rows.append([name, str(item.get("peers", 0))])
+        if not rows:
+            rows = [[self.t("geoip_missing"), "—"]]
+        update_table(self.regions_table, rows)
 
     def _fill_endpoints(self, endpoints: list[dict[str, Any]]) -> None:
         rows: list[list[str]] = []
