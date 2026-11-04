@@ -112,6 +112,20 @@ def _install_prebuilt_native_core(
         _emit(log, "[INFO] Prebuilt Rust core is currently published for Windows x64 only; using Python compatibility mode.")
         return False
 
+    existing = stream_process(
+        [
+            str(venv_python), "-c",
+            "import _swarmatlas_native as n; "
+            "print('Existing Rust core:', n.__version__); "
+            "assert 'tcp-owner-pid' in n.capabilities()",
+        ],
+        log,
+        root,
+    )
+    if existing == 0:
+        _emit(log, "[INFO] The verified Rust core is already installed; skipping download.")
+        return True
+
     release_url = (
         "https://api.github.com/repos/MAKAKAIglitch/SwarmAtlas/releases/tags/native-latest"
     )
