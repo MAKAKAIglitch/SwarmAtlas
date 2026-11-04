@@ -82,3 +82,27 @@ def test_python_adapter_keeps_legacy_scan_for_pre_refactor_core(monkeypatch) -> 
 
     assert calls == [50_000]
     assert len(rows) == 1
+
+
+
+def test_current_native_adapter_skips_duplicate_ip_range_classification(monkeypatch) -> None:
+    fake = SimpleNamespace(
+        list_tcp_connections=lambda limit: [
+            ("8.8.8.8", 443, "TCP", 42, 50000, "ESTABLISHED")
+        ]
+    )
+    monkeypatch.setattr(native_adapter, "_native", fake)
+    monkeypatch.setattr(
+        native_adapter,
+        "NATIVE_CAPABILITIES",
+        frozenset({"tcp-public-endpoints"}),
+    )
+    monkeypatch.setattr(
+        native_adapter.ipaddress,
+        "ip_address",
+        lambda _value: (_ for _ in ()).throw(AssertionError("reparsed Rust-validated IP")),
+    )
+
+    rows = native_adapter.list_tcp_connections(limit=10)
+
+    assert rows[0]["ip"] == "8.8.8.8"
