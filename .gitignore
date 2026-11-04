@@ -15,3 +15,5 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+native/target/
+native/dist/
