@@ -6,7 +6,9 @@ SwarmAtlas is a passive, read-only monitor.
 
 Allowed operations in the current prototype:
 - Read network interface counters and interface state through psutil.
-- Read the operating system's current TCP/UDP connection table through psutil.
+- Read the operating system's TCP/UDP connection-owner tables through the optional Rust extension (Windows IP Helper APIs), or through the Python psutil fallback.
+- Read process IDs and, when permitted, process names for observed connections.
+- Read local UDP bind ownership (PID/local address/local port); this table does not expose the remote IP for every UDP datagram.
 - Read a local GeoIP .mmdb file selected by the user.
 - Write SwarmAtlas settings and statistics to the current user's application-data directory.
 - Render local statistics in the desktop UI.
@@ -25,7 +27,11 @@ The app should run as a normal Windows user. It must not request administrator p
 
 ## Network behavior
 
-The monitor itself should not bind/listen on a port or create tunnels. The current prototype makes no remote GeoIP requests and has no telemetry endpoint.
+The monitor itself should not bind/listen on a port or create tunnels. The current prototype makes no remote GeoIP requests and has no telemetry endpoint. The Rust extension calls GetExtendedTcpTable and GetExtendedUdpTable for read-only OS metadata; it does not install filters, hooks, drivers or services. If the native extension is absent or an API call is unavailable, the Python compatibility collector remains active.
+
+## Local data
+
+Observed public IPs, process IDs/names, GeoIP metadata, settings and traffic history remain in the user's local SwarmAtlas data directory. They are not uploaded to a SwarmAtlas service. The update helper only contacts GitHub when the user runs it; the first-run package installer downloads its declared dependencies from the configured package index.
 
 ## Future features
 
