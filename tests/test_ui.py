@@ -61,5 +61,6 @@ def test_world_map_zoom_controls_and_vector_boundaries_render_offscreen() -> Non
     pixmap.fill()
     widget.render(pixmap)
     assert not pixmap.isNull()
+    assert widget._nearest_location(widget._screen_point(-122.0, 37.4)) == 0
     widget.deleteLater()
     app.processEvents()

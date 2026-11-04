@@ -475,7 +475,7 @@ class WorldMap(QWidget):
                     float(item["longitude"]),
                     float(item["latitude"]),
                 )
-                if not area.adjusted(-8, -8, 8, 8).contains(point):
+                if not QRectF(area).adjusted(-8, -8, 8, 8).contains(point):
                     continue
                 painter.setPen(QPen(QColor(colors["accent"]), 1))
                 painter.setBrush(QColor(colors["accent_light"]))
