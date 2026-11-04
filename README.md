@@ -60,21 +60,21 @@ These are conservative defaults, not a promise of zero CPU usage. Actual overhea
 
 On the first launch, the launcher creates \`.venv\` and installs SwarmAtlas with its optional GeoIP dependency. An internet connection is needed for this one-time package installation. Later launches reuse the existing environment.
 
-The launcher keeps the console visible and mirrors setup output, application output, warnings, and Python errors to a log file. Logs are stored locally in `%LOCALAPPDATA%\\SwarmAtlas\\logs\\`. The latest 10 log files are retained. No log is uploaded automatically.
+The launcher keeps the console visible and mirrors setup output, application output, warnings, and Python errors to a log file. Logs are stored locally in `%LOCALAPPDATA%\SwarmAtlas\logs\`. The latest 10 log files are retained. No log is uploaded automatically.
 
 When reporting a crash, inspect the log first and remove any private paths or details you do not want to disclose.
 
 To set it up manually from PowerShell:
 
     py -3 -m venv .venv
-    .\\.venv\\Scripts\\python -m pip install -e ".[geoip]"
-    .\\.venv\\Scripts\\python -m swarmatlas
+    .\.venv\Scripts\python -m pip install -e ".[geoip]"
+    .\.venv\Scripts\python -m swarmatlas
 
 The manual command does not use the Windows launcher's log capture.
 
 For development dependencies:
 
-    .\\.venv\\Scripts\\python -m pip install -e ".[geoip,dev]"
+    .\.venv\Scripts\python -m pip install -e ".[geoip,dev]"
 
 ## GeoIP setup
 
@@ -86,7 +86,7 @@ IP geolocation is approximate. It generally indicates an ISP's registered or egr
 
 All application data stays on this PC:
 
-- Windows: %APPDATA%\\SwarmAtlas\\
+- Windows: %APPDATA%\SwarmAtlas\
 - Other platforms: ~/.local/share/SwarmAtlas/
 
 The SQLite database stores interface counters, traffic-rate samples, and observed public endpoint metadata. It never stores packet contents. No remote geolocation requests are made. Old endpoint records are removed after 30 days; traffic-rate samples are retained for 90 days.
