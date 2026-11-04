@@ -51,6 +51,7 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 - Interface counters: sampled once per second.
 - OS socket/owner tables: scanned every 15 seconds.
 - When the optional Rust extension is installed, TCP IPv4/IPv6 ownership is read through Windows IP Helper APIs; UDP local bind ownership is read separately. The Python fallback remains available.
+- The Rust TCP/UDP reader bounds each OS-table copy to at most 50,000 rows per address-family call before returning data to Python; the app then keeps at most 2,000 public endpoints per scan.
 - Endpoint list: capped at 2,000 entries per scan.
 - Traffic history: sampled every 10 seconds and retained for 90 days.
 - GeoIP results: cached in memory (maximum 8,192 addresses) to avoid repeated disk lookups.
