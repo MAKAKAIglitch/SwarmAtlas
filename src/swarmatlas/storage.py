@@ -61,6 +61,7 @@ class Store:
         if not has_tables:
             self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
         self._last_compaction = 0.0
+        self._last_destination_prune = 0.0
         self._create_schema()
 
     def _create_schema(self) -> None:
@@ -413,25 +414,26 @@ class Store:
                     parameters,
                 )
 
-            # Count/cull remains bounded to the configured history cap. Evict
-            # oldest observations first; current peers naturally have newer
-            # last_seen values and do not need a full-table active-flag update.
-            row_count = int(self._db.execute(
-                "SELECT COUNT(*) FROM destinations"
-            ).fetchone()[0])
-            excess = row_count - MAX_DESTINATION_ROWS
-            if excess > 0:
-                victims = self._db.execute(
-                    """
-                    SELECT ip, port, protocol, process_id FROM destinations
-                    ORDER BY last_seen ASC LIMIT ?
-                    """,
-                    (excess,),
-                ).fetchall()
-                self._db.executemany(
-                    "DELETE FROM destinations WHERE ip = ? AND port = ? AND protocol = ? AND process_id = ?",
-                    [tuple(row) for row in victims],
-                )
+            # A full COUNT(*) is O(number of retained peers). Check the cap
+            # once per minute instead of once per socket scan.
+            if timestamp - self._last_destination_prune >= 60.0:
+                row_count = int(self._db.execute(
+                    "SELECT COUNT(*) FROM destinations"
+                ).fetchone()[0])
+                excess = row_count - MAX_DESTINATION_ROWS
+                if excess > 0:
+                    victims = self._db.execute(
+                        """
+                        SELECT ip, port, protocol, process_id FROM destinations
+                        ORDER BY last_seen ASC LIMIT ?
+                        """,
+                        (excess,),
+                    ).fetchall()
+                    self._db.executemany(
+                        "DELETE FROM destinations WHERE ip = ? AND port = ? AND protocol = ? AND process_id = ?",
+                        [tuple(row) for row in victims],
+                    )
+                self._last_destination_prune = timestamp
 
     def destination_summary(self, now: float | None = None) -> dict[str, Any]:
         """Load the slower-changing endpoint, country and region views."""
