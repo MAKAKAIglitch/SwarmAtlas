@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+import logging
 from pathlib import Path
 import math
 import shutil
@@ -29,6 +30,9 @@ from .i18n import tr, translate_status
 from .map_geometry import build_boundary_paths
 from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
 from .utils import format_bytes, format_rate
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def card() -> QFrame:
@@ -831,6 +835,7 @@ class WorldMap(QWidget):
         # segments are stable while the pointer moves. Rasterize them once and
         # redraw only endpoint markers/tooltips until the view actually changes.
         if self._base_layer_cache is None or self._base_layer_cache.size() != self.size():
+            base_started = time.perf_counter()
             cache = QPixmap(self.size())
             cache.fill(QColor(colors["surface_alt"]))
             base_painter = QPainter(cache)
@@ -841,7 +846,17 @@ class WorldMap(QWidget):
             self._draw_administrative_boundaries(base_painter, map_rect)
             base_painter.end()
             self._base_layer_cache = cache
+            base_duration_ms = (time.perf_counter() - base_started) * 1000.0
+            if base_duration_ms >= 25.0:
+                _LOGGER.warning(
+                    "Map base layer rebuild took %.1f ms at %dx%d, zoom %.2f",
+                    base_duration_ms,
+                    self.width(),
+                    self.height(),
+                    self._zoom,
+                )
 
+        paint_started = time.perf_counter()
         painter = QPainter(self)
         painter.drawPixmap(0, 0, self._base_layer_cache)
 
@@ -873,6 +888,15 @@ class WorldMap(QWidget):
                 f"OSM z{self._tile_zoom_for_scale(self._zoom)}/{self.TILE_MAX_ZOOM}",
             )
         painter.restore()
+        painter.end()
+        paint_duration_ms = (time.perf_counter() - paint_started) * 1000.0
+        if paint_duration_ms >= 33.0:
+            _LOGGER.warning(
+                "Map paint took %.1f ms for %d markers, zoom %.2f",
+                paint_duration_ms,
+                len(self._location_world_points),
+                self._zoom,
+            )
 
     def wheelEvent(self, event: Any) -> None:
         delta = event.angleDelta().y()
@@ -1570,6 +1594,7 @@ class MainWindow(QMainWindow):
         self._map_dialog.activateWindow()
 
     def update_snapshot(self, snapshot: dict[str, Any]) -> None:
+        snapshot_started = time.perf_counter()
         self._last_snapshot = snapshot
         upload = int(snapshot.get("upload_total", 0))
         download = int(snapshot.get("download_total", 0))
@@ -1608,6 +1633,13 @@ class MainWindow(QMainWindow):
         if connection_status:
             status_parts.append(connection_status)
         self.statusBar().showMessage("  ·  ".join(status_parts))
+        snapshot_duration_ms = (time.perf_counter() - snapshot_started) * 1000.0
+        if snapshot_duration_ms >= 25.0:
+            _LOGGER.warning(
+                "UI snapshot update took %.1f ms for %d endpoints",
+                snapshot_duration_ms,
+                len(endpoints),
+            )
 
     def _fill_countries(self, countries: list[dict[str, Any]]) -> None:
         rows: list[list[str]] = []
