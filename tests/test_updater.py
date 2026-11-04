@@ -7,6 +7,8 @@ import pytest
 
 from update_project import (
     NATIVE_WHEEL_FILENAME,
+    NATIVE_REQUIRED_CAPABILITIES,
+    verify_installed_native,
     install_prebuilt_native,
     refresh_native_extension,
     safe_members,
@@ -241,6 +243,31 @@ def test_updater_rebuilds_installed_native_extension_when_toolchain_exists(
     )
 
     assert refresh_native_extension(root) is True
-    assert len(calls) == 2
+    assert len(calls) == 3
+    assert "tcp-public-endpoints" in calls[2]["command"][-1]
+    assert calls[2]["cwd"] == str(root)
     assert calls[1]["cwd"] == str(root / "native")
     assert calls[1]["env"]["VIRTUAL_ENV"] == str(root / ".venv")
+
+
+
+def test_updater_native_capabilities_require_rust_side_endpoint_filter() -> None:
+    assert "tcp-public-endpoints" in NATIVE_REQUIRED_CAPABILITIES
+
+
+def test_updater_rejects_native_build_without_optimized_capability(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append([str(part) for part in command])
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert verify_installed_native(tmp_path / "python.exe", tmp_path) is False
+    assert len(calls) == 1
+    assert "tcp-public-endpoints" in calls[0][-1]
