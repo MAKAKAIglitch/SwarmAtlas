@@ -274,7 +274,7 @@ class NetworkWorker(QThread):
             store = Store(database_path())
             locator = GeoLocator(self._requested_geoip_databases)
             interface = self._resolve_interface(self._requested_interface)
-            status = f"{locator.status} · {backend_status()}"
+            status = locator.status
             self.status_changed.emit(status)
             if not interface:
                 self.status_changed.emit("No active network interface found")
