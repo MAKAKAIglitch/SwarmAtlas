@@ -2,54 +2,126 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 class GeoLocator:
-    """Optional offline GeoIP lookup. No address is sent to a remote service."""
+    """Read-only offline GeoIP lookup across several selected MMDB files."""
 
-    CACHE_LIMIT = 4096
+    CACHE_LIMIT = 8192
+    WARMUP_ADDRESSES = ("1.1.1.1", "8.8.8.8")
 
-    def __init__(self, database_path: str = ""):
-        self._reader: Any | None = None
+    def __init__(self, database_paths: str | Iterable[str] = ""):
+        if isinstance(database_paths, str):
+            paths = [database_paths] if database_paths else []
+        else:
+            paths = list(database_paths)
+
+        self._readers: list[tuple[str, Any, str]] = []
         self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._errors: list[str] = []
         self.status = "GeoIP database not configured"
-        path = Path(database_path).expanduser() if database_path else None
-        if path is None or not path.is_file():
+
+        selected = [Path(value).expanduser() for value in paths if str(value).strip()]
+        if not selected:
             return
 
         try:
             import geoip2.database  # type: ignore[import-not-found]
-
-            self._reader = geoip2.database.Reader(str(path))
-            self.status = f"Local GeoIP: {path.name}"
         except ImportError:
             self.status = "Install the optional 'geoip' dependency"
-        except Exception as exc:
-            self.status = f"Could not open GeoIP database: {exc}"
+            return
+
+        for path in selected:
+            if not path.is_file():
+                self._errors.append(f"{path.name}: file not found")
+                continue
+            reader = None
+            try:
+                reader = geoip2.database.Reader(str(path))
+                database_type = str(reader.metadata().database_type)
+                lowered = database_type.lower()
+
+                if "city" in lowered:
+                    kind = "city"
+                elif "country" in lowered:
+                    kind = "country"
+                elif "asn" in lowered:
+                    kind = "asn"
+                elif "isp" in lowered:
+                    kind = "isp"
+                else:
+                    self._errors.append(f"{path.name}: unsupported database type ({database_type})")
+                    reader.close()
+                    continue
+
+                self._readers.append((kind, reader, path.name))
+            except Exception as exc:
+                if reader is not None:
+                    try:
+                        reader.close()
+                    except Exception:
+                        pass
+                self._errors.append(f"{path.name}: {type(exc).__name__}: {exc}")
+
+        self._readers.sort(key=lambda item: {"city": 0, "country": 1, "asn": 2, "isp": 3}[item[0]])
+
+        if self._readers:
+            self._warm_readers()
+            kinds = ", ".join(
+                f"{kind.upper()} ({name})" for kind, _, name in self._readers
+            )
+            self.status = f"Local GeoIP ready: {kinds}"
+            if self._errors:
+                self.status += f"; skipped {len(self._errors)}"
+        elif self._errors:
+            self.status = "No usable GeoIP databases: " + "; ".join(self._errors[:3])
+        else:
+            self.status = "GeoIP database not configured"
+
+    def _warm_readers(self) -> None:
+        """Prime each mapped reader with local lookups; never contacts the network."""
+        for kind, reader, _ in self._readers:
+            method = getattr(reader, kind, None)
+            if method is None:
+                continue
+            for address in self.WARMUP_ADDRESSES:
+                try:
+                    method(address)
+                except Exception:
+                    continue
 
     def lookup(self, ip: str) -> dict[str, Any]:
         cached = self._cache.get(ip)
         if cached is not None:
             self._cache.move_to_end(ip)
             return dict(cached)
-        if self._reader is None:
-            return {}
 
         result: dict[str, Any] = {}
-        try:
-            response = self._reader.city(ip)
-            subdivision = response.subdivisions.most_specific
-            result = {
-                "country_code": response.country.iso_code,
-                "country": response.country.name,
-                "region": subdivision.name,
-                "city": response.city.name,
-                "latitude": response.location.latitude,
-                "longitude": response.location.longitude,
-            }
-        except Exception:
-            result = {}
+        for kind, reader, _ in self._readers:
+            try:
+                response = getattr(reader, kind)(ip)
+            except Exception:
+                continue
+
+            if kind == "city":
+                result["country_code"] = result.get("country_code") or response.country.iso_code
+                result["country"] = result.get("country") or response.country.name
+                result["region"] = result.get("region") or response.subdivisions.most_specific.name
+                result["city"] = result.get("city") or response.city.name
+                if result.get("latitude") is None:
+                    result["latitude"] = response.location.latitude
+                if result.get("longitude") is None:
+                    result["longitude"] = response.location.longitude
+            elif kind == "country":
+                result["country_code"] = result.get("country_code") or response.country.iso_code
+                result["country"] = result.get("country") or response.country.name
+            elif kind == "asn":
+                result["asn"] = result.get("asn") or response.autonomous_system_number
+                result["organization"] = result.get("organization") or response.autonomous_system_organization
+            elif kind == "isp":
+                result["isp"] = result.get("isp") or response.isp
+                result["organization"] = result.get("organization") or response.organization
 
         self._cache[ip] = result
         self._cache.move_to_end(ip)
@@ -59,6 +131,9 @@ class GeoLocator:
 
     def close(self) -> None:
         self._cache.clear()
-        if self._reader is not None:
-            self._reader.close()
-            self._reader = None
+        for _, reader, _ in self._readers:
+            try:
+                reader.close()
+            except Exception:
+                pass
+        self._readers.clear()
