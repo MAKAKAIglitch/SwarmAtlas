@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 MIN_PYTHON = (3, 11)
 MAX_LOG_FILES = 10
 DEPENDENCY_PROBE = "import PySide6, psutil, geoip2, maxminddb, shapefile, swarmatlas"
+NATIVE_CAPABILITY_ASSERTION = "assert {'tcp-owner-pid', 'tcp-public-endpoints'} <= set(n.capabilities())"
 
 
 def _timestamp() -> str:
@@ -117,7 +118,7 @@ def _install_prebuilt_native_core(
             str(venv_python), "-c",
             "import _swarmatlas_native as n; "
             "print('Existing Rust core:', n.__version__); "
-            "assert 'tcp-owner-pid' in n.capabilities()",
+            NATIVE_CAPABILITY_ASSERTION,
         ],
         log,
         root,
@@ -196,7 +197,7 @@ def _install_prebuilt_native_core(
                     "import _swarmatlas_native as n; "
                     "print('Rust core:', n.__version__); "
                     "print('Features:', ', '.join(n.capabilities())); "
-                    "assert 'tcp-owner-pid' in n.capabilities()",
+                    NATIVE_CAPABILITY_ASSERTION,
                 ],
                 log,
                 root,
