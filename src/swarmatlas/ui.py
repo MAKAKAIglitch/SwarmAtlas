@@ -691,6 +691,14 @@ class MainWindow(QMainWindow):
         self._fill_countries(snapshot.get("countries", []))
         self._fill_endpoints(endpoints)
         self.data_note.setText(self.t("data_note_live"))
+        native_status = str(snapshot.get("native_status", ""))
+        backend_label = (
+            self.t("native_engine_active")
+            if native_status.startswith("Rust monitor active")
+            else self.t("native_engine_fallback")
+        )
+        geoip_label = translate_status(str(snapshot.get("geoip_status", "")), self.current_language)
+        self.statusBar().showMessage(f"{geoip_label}  ·  {backend_label}")
 
     def _fill_countries(self, countries: list[dict[str, Any]]) -> None:
         rows: list[list[str]] = []
