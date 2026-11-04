@@ -329,17 +329,21 @@ def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
         )
 
         say("[Updater] Native wheel SHA-256 verified. Installing the local file...")
+        install_env = os.environ.copy()
+        install_env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
         result = subprocess.run(
             [
                 str(venv_python),
                 "-m",
                 "pip",
                 "install",
+                "--no-index",
                 "--no-deps",
                 "--force-reinstall",
                 str(wheel_path),
             ],
             cwd=str(root),
+            env=install_env,
             text=True,
         )
         if result.returncode != 0:
