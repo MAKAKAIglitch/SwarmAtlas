@@ -53,6 +53,13 @@ class Store:
         self._db.execute("PRAGMA temp_store=MEMORY")
         self._db.execute("PRAGMA mmap_size=33554432")
         self._db.execute("PRAGMA journal_size_limit=4194304")
+        # Enable incremental page reclamation for newly created databases.
+        # Existing databases keep their current auto-vacuum mode unchanged.
+        has_tables = self._db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
+        ).fetchone()
+        if not has_tables:
+            self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
         self._last_compaction = 0.0
         self._create_schema()
 
