@@ -837,6 +837,7 @@ class WorldMapDialog(QDialog):
         self.attribution = QLabel(attribution)
         self.attribution.setTextFormat(Qt.TextFormat.RichText)
         self.attribution.setOpenExternalLinks(True)
+        self.attribution.setWordWrap(True)
         self.attribution.setStyleSheet(f"color: {palette['muted']}; background: transparent;")
         layout.addWidget(self.attribution)
 
@@ -1105,6 +1106,7 @@ class MainWindow(QMainWindow):
         self.map_attribution_label = QLabel(self._map_attribution_html())
         self.map_attribution_label.setTextFormat(Qt.TextFormat.RichText)
         self.map_attribution_label.setOpenExternalLinks(True)
+        self.map_attribution_label.setWordWrap(True)
         self.map_attribution_label.setStyleSheet(
             f"color: {self.palette['muted']}; background: transparent;"
         )
