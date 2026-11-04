@@ -103,9 +103,11 @@ The Rust module is optional. Without it, the existing psutil-based Python collec
 
 To build the optional Rust module:
 
-1. Install the stable Rust toolchain (Rust 1.85 or newer) from [rustup.rs](https://rustup.rs/).
+1. Install the stable Rust toolchain (Rust 1.85 or newer) from [rustup.rs](https://rustup.rs/). The Windows MSVC linker and Windows SDK must also be available.
 2. Run `build_native.bat` from the SwarmAtlas folder.
 3. Restart SwarmAtlas.
+
+To compare the TCP table enumeration time on your own PC, run `\.venv\Scripts\python.exe benchmarks\benchmark_native.py --iterations 50`. The benchmark reports only aggregate timings and row counts; it does not print or save peer IPs or process names. Compare its local results rather than assuming Rust is faster on every machine.
 
 The build uses PyO3 0.30.1 with the stable `abi3-py311` ABI and maturin 1.16.0. The Windows wheel is therefore compatible with regular CPython 3.11 and newer, instead of being tied to the CI Python 3.12 minor version. It compiles locally for the current Windows/Python environment; it does not install drivers or alter Windows networking. GitHub Actions also builds and tests a Windows x64 wheel and retains it as a workflow artifact.
 
