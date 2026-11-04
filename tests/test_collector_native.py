@@ -230,3 +230,31 @@ def test_unconnected_udp_sockets_are_counted_without_inventing_remote_peers(monk
     assert stats["udp_local_sockets"] == 2
     assert stats["udp_public_peers"] == 0
     assert stats["udp_binding_error"] is None
+
+
+
+def test_process_names_are_resolved_in_one_cached_process_table_pass(monkeypatch) -> None:
+    class FakeProcess:
+        def __init__(self, process_id: int, name: str):
+            self.info = {"pid": process_id, "name": name}
+
+    monkeypatch.setattr(
+        collector.psutil,
+        "process_iter",
+        lambda attrs=None: [
+            FakeProcess(101, "browser.exe"),
+            FakeProcess(202, "game.exe"),
+        ],
+    )
+    monkeypatch.setattr(
+        collector.psutil,
+        "Process",
+        lambda _pid: (_ for _ in ()).throw(AssertionError("per-PID lookup was used")),
+    )
+    collector._PROCESS_NAME_CACHE.clear()
+
+    collector._warm_process_name_cache([101, 202, 101])
+
+    assert collector._process_name(101) == "browser.exe"
+    assert collector._process_name(202) == "game.exe"
+    assert set(collector._PROCESS_NAME_CACHE) == {101, 202}
