@@ -118,9 +118,14 @@ The manual command does not run the Windows launcher or its automatic native-whe
 
 ## Optional local Rust build
 
-The Python application, UI, localization, GeoIP orchestration, settings and SQLite store remain Python-side. The optional PyO3/Rust extension reads Windows TCP IPv4/IPv6 connection-owner tables and UDP IPv4/IPv6 local socket-owner tables through read-only Windows IP Helper APIs.
+The Python application, UI, localization, GeoIP orchestration, settings and SQLite store remain Python-side. The optional PyO3/Rust extension is split into platform and network modules:
 
-The native reader is bounded to at most 50,000 rows per address-family call; the app keeps at most 2,000 public endpoints per scan. Windows' UDP ownership table describes local socket bindings; it does not reveal every remote UDP destination. SwarmAtlas only associates a UDP peer when the OS socket table exposes a connected remote endpoint.
+- `native/src/platform/windows/api.rs` owns bounded Windows IP Helper table queries and port decoding.
+- `native/src/platform/windows/tcp.rs` and `udp.rs` decode the IPv4/IPv6 owner-PID table layouts separately.
+- `native/src/network/address.rs` canonicalizes IPv4-mapped IPv6 addresses and filters non-public/special-purpose destinations before Python objects are created.
+- `native/src/lib.rs` is only the PyO3 boundary; it releases the GIL while Windows tables are queried and decoded.
+
+For TCP, Rust scans a bounded OS-table prefix (up to 100,000 rows per address family), filters non-public addresses natively, and returns no more than the requested endpoint limit (2,000 in the dashboard). Python therefore receives only usable public destinations, rather than converting tens of thousands of irrelevant rows across the extension boundary. UDP ownership remains a local-binding table; it does not reveal every remote UDP destination. SwarmAtlas reports those local sockets separately and only associates a UDP peer when a remote address is actually exposed by the OS.
 
 The prebuilt Rust extension is installed automatically by run_windows.bat when a verified release is available. To build locally instead, install Rust 1.85 or newer and the Windows MSVC linker/SDK, then run build_native.bat. The Python collector remains the fallback.
 
