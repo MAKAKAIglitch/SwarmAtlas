@@ -325,6 +325,9 @@ class NetworkWorker(QThread):
         self._lock = threading.Lock()
         self._requested_interface = config.interface
         self._requested_geoip_databases = tuple(config.configured_geoip_databases())
+        self._requested_geoip_provider = config.geoip_provider
+        self._requested_geoip_api_key = config.geoip_api_key
+        self._history_range_seconds = 3600
         self._stop_event = threading.Event()
 
     def set_interface(self, name: str) -> None:
@@ -334,6 +337,15 @@ class NetworkWorker(QThread):
     def set_geoip_databases(self, paths: list[str]) -> None:
         with self._lock:
             self._requested_geoip_databases = tuple(paths)
+
+    def set_geoip_provider(self, provider: str, api_key: str = "") -> None:
+        with self._lock:
+            self._requested_geoip_provider = provider
+            self._requested_geoip_api_key = api_key
+
+    def set_history_range(self, seconds: int) -> None:
+        with self._lock:
+            self._history_range_seconds = max(60, min(int(seconds), 5 * 365 * 24 * 60 * 60))
 
     def stop(self, timeout_ms: int = 10000) -> bool:
         """Request graceful shutdown; never forcibly terminate the worker."""
@@ -345,7 +357,7 @@ class NetworkWorker(QThread):
         locator: GeoLocator | None = None
         startup_notified = False
         try:
-            store = Store(database_path())
+            store = Store(database_path(self._config))
             interface = self._resolve_interface(self._requested_interface)
 
             # Show the desktop immediately. First-run data downloads continue
@@ -355,30 +367,35 @@ class NetworkWorker(QThread):
 
             with self._lock:
                 configured_geoip = self._requested_geoip_databases
+                selected_provider = self._requested_geoip_provider
+                selected_api_key = self._requested_geoip_api_key
 
-            if configured_geoip:
-                effective_geoip = configured_geoip
-            else:
-                self.status_changed.emit("Downloading or checking the local DB-IP City Lite database…")
-                try:
-                    database = ensure_default_geoip_database(
-                        progress=lambda value: self.status_changed.emit(
-                            f"Downloading DB-IP City Lite database: {value}%"
+            effective_geoip: tuple[str, ...] = ()
+            if selected_provider == "dbip":
+                if configured_geoip:
+                    effective_geoip = configured_geoip
+                else:
+                    self.status_changed.emit("Downloading or checking the local DB-IP City Lite database…")
+                    try:
+                        database = ensure_default_geoip_database(
+                            progress=lambda value: self.status_changed.emit(
+                                f"Downloading DB-IP City Lite database: {value}%"
+                            )
                         )
-                    )
-                    effective_geoip = (str(database),)
-                except Exception as exc:
-                    _LOGGER.exception("Could not prepare the default DB-IP City Lite database")
-                    effective_geoip = ()
-                    self.status_changed.emit(
-                        f"Could not prepare the default DB-IP database: {type(exc).__name__}: {exc}"
-                    )
+                        effective_geoip = (str(database),)
+                    except Exception as exc:
+                        _LOGGER.exception("Could not prepare the default DB-IP City Lite database")
+                        self.status_changed.emit(
+                            f"Could not prepare the default DB-IP database: {type(exc).__name__}: {exc}"
+                        )
 
             locator = GeoLocator(
                 effective_geoip,
                 language=resolve_language(self._config.language),
+                provider=selected_provider,
+                api_key=selected_api_key,
             )
-            loaded_geoip = effective_geoip
+            loaded_geoip = (effective_geoip, selected_provider, selected_api_key)
             self.status_changed.emit(locator.status)
             if not interface:
                 self.status_changed.emit("No active network interface found")
@@ -411,25 +428,33 @@ class NetworkWorker(QThread):
                 with self._lock:
                     requested = self._requested_interface
                     requested_geoip = self._requested_geoip_databases
+                    requested_provider = self._requested_geoip_provider
+                    requested_api_key = self._requested_geoip_api_key
+                    history_range_seconds = self._history_range_seconds
 
-                # An empty selection means "use the automatically managed local
-                # DB-IP database", not "turn geolocation off".
-                if requested_geoip:
-                    effective_geoip = requested_geoip
-                else:
-                    from .geoip_data import default_geoip_database_path
+                # Local DB-IP remains the private default. Remote lookup is only
+                # active after the user explicitly selects an online provider.
+                effective_geoip: tuple[str, ...] = ()
+                if requested_provider == "dbip":
+                    if requested_geoip:
+                        effective_geoip = requested_geoip
+                    else:
+                        from .geoip_data import default_geoip_database_path
 
-                    default_path = default_geoip_database_path()
-                    effective_geoip = (str(default_path),) if default_path.is_file() else ()
+                        default_path = default_geoip_database_path()
+                        effective_geoip = (str(default_path),) if default_path.is_file() else ()
 
-                if effective_geoip != loaded_geoip:
+                geoip_signature = (effective_geoip, requested_provider, requested_api_key)
+                if geoip_signature != loaded_geoip:
                     if locator is not None:
                         locator.close()
                     locator = GeoLocator(
                         effective_geoip,
                         language=resolve_language(self._config.language),
+                        provider=requested_provider,
+                        api_key=requested_api_key,
                     )
-                    loaded_geoip = effective_geoip
+                    loaded_geoip = geoip_signature
                     self.status_changed.emit(locator.status)
 
                 try:
@@ -487,7 +512,9 @@ class NetworkWorker(QThread):
 
                 if interface:
                     payload = store.summary(interface, now_wall)
+                    payload["samples"] = store.history(history_range_seconds, now_wall)
                     payload.update({
+                        "history_range_seconds": history_range_seconds,
                         "interface": interface,
                         "upload_bps": upload_rate,
                         "download_bps": download_rate,
