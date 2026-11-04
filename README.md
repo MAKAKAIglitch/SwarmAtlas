@@ -29,7 +29,11 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 | Current upload/download rate | Implemented |
 | Persistent local history (SQLite) | Implemented |
 | Active public remote endpoints | Implemented |
-| Offline country/city lookup using local GeoIP | Optional |
+| Offline city/country/ASN/ISP lookup using multiple local GeoIP databases | Optional |
+| GeoIP readers warmed in the background on startup | Implemented |
+| System-matched theme and language | Implemented |
+| Native Windows 11 Mica backdrop | Supported on Windows 11 22H2+ |
+| One-click project updater | Implemented |
 | World map with approximate endpoint locations | Implemented when GeoIP is configured |
 | Per-destination / per-country byte totals | Not implemented |
 | Russian and English interface | Implemented (Russian by default) |
@@ -44,7 +48,8 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 - OS socket table: scanned every 15 seconds.
 - Endpoint list: capped at 2,000 entries per scan.
 - Traffic history: sampled every 10 seconds and retained for 90 days.
-- GeoIP results: cached in memory (maximum 4,096 addresses) to avoid repeated disk lookups.
+- GeoIP results: cached in memory (maximum 8,192 addresses) to avoid repeated disk lookups.
+- Selected MMDB readers are opened and warmed on a background worker during startup; the UI remains responsive while they initialize.
 - SQLite uses WAL mode and normal synchronous mode.
 
 These are conservative defaults, not a promise of zero CPU usage. Actual overhead depends on the number of active sockets, Windows version, and hardware.
@@ -80,11 +85,34 @@ For development dependencies:
 
 ## Appearance and language
 
-The desktop app opens in Russian with the dark theme by default. Use the controls in the left sidebar to switch between Russian and English or between dark and light themes. Both preferences are saved locally in `settings.json` and restored on the next launch.
+By default, theme and language both follow the operating system. Use the left sidebar to override either setting:
+
+- Theme: System, Dark, or Light.
+- Language: System, Русский, or English.
+
+On Windows 11 build 22621 or newer, SwarmAtlas asks Desktop Window Manager for the native Mica main-window backdrop. On unsupported Windows versions, it falls back to the regular dark/light palette. System theme changes are applied while the app is open when Qt reports the updated color scheme.
+
+The dashboard avoids clearing and rebuilding its tables during normal sampling. Existing cells are updated in place, and metric changes use a short fade transition.
+
+## Updating the project
+
+Close SwarmAtlas and double-click `update_project.bat` in the project folder.
+
+- In a Git clone, the updater checks that the working tree is clean and uses a fast-forward-only update.
+- In a ZIP-extracted folder, it downloads the latest `main` archive from GitHub and safely overlays project files.
+- The updater preserves `.venv`, local MMDB files, SQLite databases, logs, and files outside the repository.
+- If a virtual environment already exists, it refreshes the editable package and optional GeoIP dependency.
+- It does not silently stash, reset, or rewrite local Git commits.
+
+An internet connection is required. After a successful update, start the app with `run_windows.bat`.
 
 ## GeoIP setup
 
-Choose a local MaxMind-compatible City database in Settings → GeoIP database. Obtain the database from a provider whose licence permits your use and follow that provider's terms.
+Open **GeoIP database** in the left sidebar and add one or more local `.mmdb` files. City, Country, ASN, and ISP database types can be combined. ASN/ISP details are shown in the recent-destinations table.
+
+The selected databases are read locally. IP addresses are not sent to a remote geolocation provider. The reader files are opened and warmed in the background during cold start; SwarmAtlas does not copy entire databases into RAM.
+
+The official 2ip.io documentation currently describes an online JSON geolocation API that requires a token, rather than a downloadable local MMDB database. Using that API would send each queried peer IP to 2ip and is rate-limited, so it is not enabled in this local-first build.
 
 IP geolocation is approximate. It generally indicates an ISP's registered or egress area, not a person's exact location.
 
@@ -116,7 +144,7 @@ The SQLite database stores interface counters, traffic-rate samples, and observe
 ## Development
 
     python -m pytest
-    python -m compileall src
+    python -m compileall run_windows.py update_project.py src
 
 ## License
 
