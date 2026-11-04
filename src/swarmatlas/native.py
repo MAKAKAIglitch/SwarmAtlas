@@ -74,7 +74,7 @@ def list_tcp_connections(limit: int = 2000) -> list[dict[str, Any]]:
                 address_text = str(address)
         except ValueError:
             continue
-        if not address.is_global:
+        if 'tcp-public-endpoints' not in NATIVE_CAPABILITIES and not address.is_global:
             continue
 
         try:
