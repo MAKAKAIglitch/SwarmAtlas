@@ -1477,7 +1477,11 @@ class MainWindow(QMainWindow):
             else self.t("native_engine_fallback")
         )
         geoip_label = translate_status(str(snapshot.get("geoip_status", "")), self.current_language)
-        self.statusBar().showMessage(f"{geoip_label}  ·  {backend_label}")
+        connection_status = str(snapshot.get("connection_status", "")).strip()
+        status_parts = [geoip_label, backend_label]
+        if connection_status:
+            status_parts.append(connection_status)
+        self.statusBar().showMessage("  ·  ".join(status_parts))
 
     def _fill_countries(self, countries: list[dict[str, Any]]) -> None:
         rows: list[list[str]] = []
