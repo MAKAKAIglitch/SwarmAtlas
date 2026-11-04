@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
+import sqlite3
 from typing import Any
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, Signal, Slot
@@ -1149,6 +1150,16 @@ class MainWindow(QMainWindow):
         if selected_dir == current_path.parent.resolve():
             return
         target_path = selected_dir / "swarmatlas.sqlite3"
+        if target_path.exists():
+            answer = QMessageBox.question(
+                self,
+                self.t("database_location"),
+                self.t("database_existing_confirm", path=str(target_path)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
 
         if self.worker.isRunning() and not self.worker.stop():
             QMessageBox.warning(self, self.t("stopping_title"), self.t("stopping_message"))
@@ -1157,7 +1168,17 @@ class MainWindow(QMainWindow):
         previous_directory = self.config.database_directory
         try:
             selected_dir.mkdir(parents=True, exist_ok=True)
-            if current_path.is_file() and not target_path.exists():
+            if target_path.exists():
+                check_db = sqlite3.connect(str(target_path), timeout=5.0)
+                try:
+                    check_result = check_db.execute("PRAGMA quick_check").fetchone()
+                finally:
+                    check_db.close()
+                if not check_result or str(check_result[0]).lower() != "ok":
+                    raise sqlite3.DatabaseError(
+                        f"Selected database failed SQLite quick_check: {check_result!r}"
+                    )
+            elif current_path.is_file():
                 shutil.copy2(current_path, target_path)
             self.config.database_directory = str(selected_dir)
             self.config.save()
