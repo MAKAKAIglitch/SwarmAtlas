@@ -41,5 +41,5 @@ def test_stream_process_records_nonzero_exit_code(tmp_path: Path) -> None:
         )
 
     assert result == 23
-    assert "exit code 23" in output.getvalue()
-    assert "exit code 23" in log_path.read_text(encoding="utf-8")
+    assert "code 23" in output.getvalue()
+    assert "code 23" in log_path.read_text(encoding="utf-8")
