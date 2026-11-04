@@ -1612,7 +1612,9 @@ class MainWindow(QMainWindow):
             f"↓ {self.t('receiving')}: {format_rate(down_rate)}"
         )
         endpoints = snapshot.get("active_endpoints", [])
-        self.live_status.setText(self.t("monitoring", count=len(endpoints)))
+        live_text = self.t("monitoring", count=len(endpoints))
+        if self.live_status.text() != live_text:
+            self.live_status.setText(live_text)
         self.world_map.set_locations(endpoints)
         self.chart.set_samples(snapshot.get("samples", []))
         self._fill_countries(snapshot.get("countries", []))
@@ -1620,7 +1622,9 @@ class MainWindow(QMainWindow):
         self._fill_endpoints(endpoints)
         if self._map_dialog is not None and self._map_dialog.isVisible():
             self._map_dialog.map_widget.set_locations(endpoints)
-        self.data_note.setText(self.t("data_note_live"))
+        live_note = self.t("data_note_live")
+        if self.data_note.text() != live_note:
+            self.data_note.setText(live_note)
         native_status = str(snapshot.get("native_status", ""))
         backend_label = (
             self.t("native_engine_active")
@@ -1632,7 +1636,10 @@ class MainWindow(QMainWindow):
         status_parts = [geoip_label, backend_label]
         if connection_status:
             status_parts.append(connection_status)
-        self.statusBar().showMessage("  ·  ".join(status_parts))
+        status_message = "  ·  ".join(status_parts)
+        if getattr(self, "_last_status_message", None) != status_message:
+            self._last_status_message = status_message
+            self.statusBar().showMessage(status_message)
         snapshot_duration_ms = (time.perf_counter() - snapshot_started) * 1000.0
         if snapshot_duration_ms >= 25.0:
             _LOGGER.warning(
@@ -1642,6 +1649,8 @@ class MainWindow(QMainWindow):
             )
 
     def _fill_countries(self, countries: list[dict[str, Any]]) -> None:
+        if countries is getattr(self, "_country_table_source", None):
+            return
         rows: list[list[str]] = []
         if not countries:
             rows = [[self.t("geoip_missing"), "—"]]
@@ -1650,8 +1659,11 @@ class MainWindow(QMainWindow):
                 name = item.get("country") or item.get("country_code") or self.t("unknown")
                 rows.append([str(name), str(item.get("peers", 0))])
         update_table(self.country_table, rows)
+        self._country_table_source = countries
 
     def _fill_regions(self, regions: list[dict[str, Any]]) -> None:
+        if regions is getattr(self, "_region_table_source", None):
+            return
         rows: list[list[str]] = []
         for item in regions[:8]:
             region = str(item.get("region") or self.t("unknown"))
@@ -1661,8 +1673,11 @@ class MainWindow(QMainWindow):
         if not rows:
             rows = [[self.t("geoip_missing"), "—"]]
         update_table(self.regions_table, rows)
+        self._region_table_source = regions
 
     def _fill_endpoints(self, endpoints: list[dict[str, Any]]) -> None:
+        if endpoints is getattr(self, "_endpoint_table_source", None):
+            return
         rows: list[list[str]] = []
         for item in endpoints[:10]:
             location = ", ".join(
@@ -1693,6 +1708,7 @@ class MainWindow(QMainWindow):
                 str(item["protocol"]),
             ])
         update_table(self.endpoint_table, rows)
+        self._endpoint_table_source = endpoints
 
     def closeEvent(self, event: Any) -> None:
         if self.worker.isRunning() and not self.worker.stop():
