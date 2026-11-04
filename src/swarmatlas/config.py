@@ -24,6 +24,9 @@ class AppConfig:
     geoip_databases: list[str] = field(default_factory=list)
     theme: str = "system"
     language: str = "system"
+    database_directory: str = ""
+    geoip_provider: str = "dbip"
+    geoip_api_key: str = ""
 
     def configured_geoip_databases(self) -> list[str]:
         """Return only user-selected databases, excluding the automatic DB-IP fallback."""
@@ -73,6 +76,9 @@ class AppConfig:
                 geoip_databases=databases,
                 theme=theme if theme in {"system", "dark", "light"} else "system",
                 language=language if language in {"system", "ru", "en"} else "system",
+                database_directory=str(raw.get("database_directory", "")).strip(),
+                geoip_provider=str(raw.get("geoip_provider", "dbip")) if str(raw.get("geoip_provider", "dbip")) in {"dbip", "ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "2ip"} else "dbip",
+                geoip_api_key=str(raw.get("geoip_api_key", "")),
             )
         except (OSError, ValueError, TypeError):
             return cls()
@@ -89,5 +95,9 @@ class AppConfig:
         temporary.replace(path)
 
 
-def database_path() -> Path:
-    return app_data_dir() / "swarmatlas.sqlite3"
+def database_path(config: AppConfig | None = None) -> Path:
+    """Resolve the SQLite location; settings remain in the standard app-data folder."""
+    selected = str(config.database_directory).strip() if config is not None else ""
+    directory = Path(selected).expanduser() if selected else app_data_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / "swarmatlas.sqlite3"
