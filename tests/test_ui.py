@@ -197,10 +197,24 @@ def test_world_map_skips_repaint_for_identical_endpoint_snapshots(
     assert len(widget._location_world_points) == 1
 
     widget._hovered_index = 0
-    widget.set_locations([dict(endpoint)])
+    identical_snapshot = [dict(endpoint)]
+    widget.set_locations(identical_snapshot)
     assert len(updates) == 1
     assert widget._hovered_index == 0
+    assert widget._location_source is identical_snapshot
 
+    monkeypatch.setattr(
+        widget,
+        "_normalized_point",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("the same immutable snapshot must skip signature work")
+        ),
+    )
+    widget.set_locations(identical_snapshot)
+    assert len(updates) == 1
+
+    # Restore projection for a genuinely changed location snapshot.
+    monkeypatch.undo()
     changed = dict(endpoint, city="Sunnyvale")
     widget.set_locations([changed])
     assert len(updates) == 2
