@@ -37,6 +37,7 @@ Online GeoIP is opt-in and sends the selected public destination IP to exactly o
 - ipdata.co;
 - ipapi.is;
 - IPinfo Lite (requires a token);
+- IP2Location.io (keyless or optional API token; attribution is required on its free plan);
 - 2ip.io (requires a token).
 
 The provider terms, quotas, and transport security differ. IP-API's free endpoint is HTTP and does not provide HTTPS transport. Users should check the provider's current terms before selecting a service. Private, loopback and link-local addresses are filtered out before remote lookups. Lookups run in a background thread with an in-memory cache and provider-specific request throttling. The application keeps conservative daily and monthly request counters locally per installation for free-tier budget protection. Other applications or devices sharing the same public IP or API key may also consume the provider's quota.
