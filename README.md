@@ -7,7 +7,9 @@
 SwarmAtlas combines two different Windows data sources:
 
 - **Interface counters:** exact upload/download byte deltas and live rates for the selected network adapter. These include all traffic visible to that adapter.
-- **OS connection tables:** public TCP connections and connected UDP endpoints visible to Windows, with process ownership where permitted. The map and country/region summaries are built from these endpoints.
+- **OS connection tables:** public TCP connections and UDP remote endpoints only when Windows exposes a connected remote address, with process ownership where permitted. The map and country/region summaries are built from these endpoints.
+
+**UDP visibility boundary:** Windows' `GetExtendedUdpTable` owner-PID table contains the local IP, local port and owning PID; it does not contain a remote peer IP. Most UDP sockets are unconnected, so Windows and psutil report an empty remote address for them. SwarmAtlas therefore reports local UDP socket counts separately and does not invent UDP peer markers. A future UDP-flow collector may use supported Windows event metadata to identify remote endpoints without saving packet payloads.
 
 The dashboard shows upload and download independently, updates the live rates every second, and saves the traffic history locally.
 
@@ -139,6 +141,17 @@ Close SwarmAtlas and run update_project.bat.
 - The updater preserves the Python virtual environment, local MMDB files, SQLite databases, logs and files outside the repository.
 - If a Rust extension is already installed, the updater checks for a refreshed tested wheel or local release build and verifies its SHA-256 before replacing it.
 - The updater does not silently stash, reset or rewrite local Git commits.
+
+## Planned roadmap (future work, not implemented yet)
+
+The following ideas are intentionally recorded here so they are not forgotten. They are design goals, not features available in the current build.
+
+- **iperf3 speed test:** add an optional, manually started bandwidth test against public iperf3 servers. Discover and verify servers from a maintained server directory, show country/provider/latency and server availability, and let the user choose a server and test duration. Respect each server's published usage policy, use conservative defaults, and clearly separate the speed-test result from SwarmAtlas' passive traffic counters. Public servers can disappear, become busy or restrict testing, so availability must be checked rather than assumed.
+- **Ping diagnostics:** allow one-shot and continuous ping to a chosen IP/hostname; show RTT, min/average/max, jitter, packet loss and timeouts. Keep the test cancellable and distinguish ICMP filtering from a host being offline.
+- **Traceroute:** trace a route to a chosen destination with selectable ICMP/UDP/TCP probing where supported; list hop number, address, reverse-DNS name, RTT and unanswered hops. Support IPv4 and IPv6 and explain that routers may hide or rate-limit replies.
+- **Route visualization on the map:** draw the measured hop sequence, place hop markers using approximate GeoIP coordinates when available, show per-hop latency and missing replies, and keep the route visually distinct from ordinary observed peer connections. GeoIP locations are estimates, not physical router positions; routes can change between tests.
+- **Map layers and test history:** allow switching between peer activity, ping targets, traceroute paths and speed-test server/results. Save diagnostic history locally only when the user enables it.
+- **Better UDP destination visibility:** investigate Windows ETW/network-event metadata or another documented, read-only source that can expose UDP source/destination tuples. Keep local UDP socket counts separate from verified remote peers, avoid fabricating endpoints, and do not capture or store packet payloads.
 
 ## Development and license
 
