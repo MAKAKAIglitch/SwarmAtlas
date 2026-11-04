@@ -125,7 +125,13 @@ The Python application, UI, localization, GeoIP orchestration, settings and SQLi
 - `native/src/network/address.rs` canonicalizes IPv4-mapped IPv6 addresses and filters non-public/special-purpose destinations before Python objects are created.
 - `native/src/lib.rs` is only the PyO3 boundary; it releases the GIL while Windows tables are queried and decoded.
 
-For TCP, Rust scans a bounded OS-table prefix (up to 100,000 rows per address family), filters non-public addresses natively, and returns no more than the requested endpoint limit (2,000 in the dashboard). Python therefore receives only usable public destinations, rather than converting tens of thousands of irrelevant rows across the extension boundary. UDP ownership remains a local-binding table; it does not reveal every remote UDP destination. SwarmAtlas reports those local sockets separately and only associates a UDP peer when a remote address is actually exposed by the OS.
+For TCP, Rust scans a bounded OS-table prefix (up to 100,000 rows per address family), filters non-public addresses natively, and returns no more than the requested endpoint limit (2,000 in the dashboard). It visits the aligned Win32 buffer directly, so it does not allocate and copy a second vector of all raw rows. Python receives only usable public destinations and does not repeat the address classification for the current native capability.
+
+For UDP, Rust counts IPv4 and IPv6 owner-PID table rows without materializing per-socket Python tuples. The collector no longer reads the same Windows UDP binding table a second time through psutil. This count is deliberately distinct from remote UDP peers: Windows' owner-PID table contains local bindings and does not reveal arbitrary remote destinations.
+
+The collector also resolves process names in one cached process-table pass, performs at most one GeoIP lookup per unique IP in a scan, caches endpoint summaries between socket scans and refreshes history only when its sampling interval or selected range changes. SQLite destination updates are batched; the legacy `active` column is retained for migration compatibility but is not rewritten on each scan, and full history-cap counts are throttled to once per minute.
+
+Map polygon projection and simplification run on the collector thread. The map widget keeps a rasterized background/tiles/boundaries layer and redraws only markers during ordinary endpoint and hover updates; it invalidates the cached layer when the map view, style, boundaries or tiles change.
 
 The prebuilt Rust extension is installed automatically by run_windows.bat when a verified release is available. To build locally instead, install Rust 1.85 or newer and the Windows MSVC linker/SDK, then run build_native.bat. The Python collector remains the fallback.
 
