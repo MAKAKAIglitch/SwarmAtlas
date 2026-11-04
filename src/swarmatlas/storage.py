@@ -330,16 +330,18 @@ class Store:
             else:
                 rows = self._db.execute(
                     """
-                    SELECT CAST(timestamp / ? AS INTEGER) * ? AS timestamp,
-                           AVG(upload_bps) AS upload_bps,
-                           AVG(download_bps) AS download_bps
+                    SELECT
+                        CAST(timestamp / ? AS INTEGER) * ? AS timestamp,
+                        SUM(upload_bps * sample_weight) / SUM(sample_weight) AS upload_bps,
+                        SUM(download_bps * sample_weight) / SUM(sample_weight) AS download_bps
                     FROM (
-                        SELECT timestamp, upload_bps, download_bps
+                        SELECT timestamp, upload_bps, download_bps, 1 AS sample_weight
                         FROM traffic_samples WHERE timestamp >= ?
                         UNION ALL
                         SELECT hour_start AS timestamp,
                                upload_bps_avg AS upload_bps,
-                               download_bps_avg AS download_bps
+                               download_bps_avg AS download_bps,
+                               sample_count AS sample_weight
                         FROM traffic_hourly WHERE hour_start >= ?
                     )
                     GROUP BY CAST(timestamp / ? AS INTEGER)
