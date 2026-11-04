@@ -55,16 +55,22 @@ These are conservative defaults, not a promise of zero CPU usage. Actual overhea
 
 ## Run on Windows
 
-1. Install Python 3.12 and make sure the Python Launcher (\`py\`) is available.
+1. Install Python 3.11 or newer and make sure the Python Launcher (\`py\`) is available.
 2. Double-click \`run_windows.bat\`.
 
-On the first launch, the script creates \`.venv\` and installs SwarmAtlas with its optional GeoIP dependency. An internet connection is needed for this one-time package installation. Later launches reuse the existing environment.
+On the first launch, the launcher creates \`.venv\` and installs SwarmAtlas with its optional GeoIP dependency. An internet connection is needed for this one-time package installation. Later launches reuse the existing environment.
+
+The launcher keeps the console visible and mirrors setup output, application output, warnings, and Python errors to a log file. Logs are stored locally in `%LOCALAPPDATA%\\SwarmAtlas\\logs\\`. The latest 10 log files are retained. No log is uploaded automatically.
+
+When reporting a crash, inspect the log first and remove any private paths or details you do not want to disclose.
 
 To set it up manually from PowerShell:
 
     py -3 -m venv .venv
     .\\.venv\\Scripts\\python -m pip install -e ".[geoip]"
     .\\.venv\\Scripts\\python -m swarmatlas
+
+The manual command does not use the Windows launcher's log capture.
 
 For development dependencies:
 
