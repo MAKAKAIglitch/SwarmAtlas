@@ -185,7 +185,7 @@ class Store:
         )
         # Old databases may not have process_id or local_port columns. Build
         # aggregation expressions from the source schema before grouping.
-        source_pid = "COALESCE(process_id, 0)" if "process_id" in existing else "0"
+        source_pid = "COALESCE(process_id, 0)" if "process_id" in existing else "CAST(0 AS INTEGER)"
         aggregates: dict[str, str] = {}
         for column in DESTINATION_COLUMNS:
             if column not in existing:
