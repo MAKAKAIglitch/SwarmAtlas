@@ -447,7 +447,6 @@ class WorldMap(QWidget):
 
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
         valid: list[dict[str, Any]] = []
-        world_points: list[QPointF] = []
         signature: list[tuple[Any, ...]] = []
         for item in locations:
             try:
@@ -458,7 +457,6 @@ class WorldMap(QWidget):
             if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
                 continue
             valid.append(item)
-            world_points.append(self._normalized_point(longitude, latitude))
             signature.append((
                 str(item.get("ip", "")),
                 round(latitude, 6),
@@ -474,7 +472,10 @@ class WorldMap(QWidget):
 
         self.locations = valid
         self._location_signature = new_signature
-        self._location_world_points = world_points
+        self._location_world_points = [
+            self._normalized_point(float(item["longitude"]), float(item["latitude"]))
+            for item in valid
+        ]
         self._hovered_index = None
         self.update()
 
