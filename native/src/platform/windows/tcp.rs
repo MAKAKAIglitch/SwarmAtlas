@@ -1,5 +1,5 @@
 use super::api::{
-    decode_port, query_tcp_rows, AF_INET, AF_INET6, MAX_TABLE_ROWS, TCP_TABLE_OWNER_PID_ALL,
+    decode_port, query_tcp_rows_with, AF_INET, AF_INET6, MAX_TABLE_ROWS, TCP_TABLE_OWNER_PID_ALL,
 };
 use crate::network::address::{canonical_ip, is_public_ip};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -59,17 +59,14 @@ pub(crate) fn list_tcp_connections(limit: usize) -> Result<Vec<TcpConnection>, S
     let mut errors = Vec::new();
 
     unsafe {
-        match query_tcp_rows::<TcpRowV4>(
+        match query_tcp_rows_with::<TcpRowV4, _>(
             AF_INET,
             TCP_TABLE_OWNER_PID_ALL,
             MAX_TABLE_ROWS,
             "GetExtendedTcpTable(AF_INET)",
-        ) {
-            Ok(table) => {
-                successful_tables += 1;
+            |table| {
                 for row in table {
-                    let remote = Ipv4Addr::from(row.remote_addr.to_ne_bytes());
-                    let remote = IpAddr::V4(remote);
+                    let remote = IpAddr::V4(Ipv4Addr::from(row.remote_addr.to_ne_bytes()));
                     if !is_public_ip(remote) {
                         continue;
                     }
@@ -85,23 +82,22 @@ pub(crate) fn list_tcp_connections(limit: usize) -> Result<Vec<TcpConnection>, S
                         break;
                     }
                 }
-            }
+            },
+        ) {
+            Ok(()) => successful_tables += 1,
             Err(error) => errors.push(error),
         }
 
         let remaining = limit.saturating_sub(rows.len());
         if remaining > 0 {
-            match query_tcp_rows::<TcpRowV6>(
+            match query_tcp_rows_with::<TcpRowV6, _>(
                 AF_INET6,
                 TCP_TABLE_OWNER_PID_ALL,
                 MAX_TABLE_ROWS,
                 "GetExtendedTcpTable(AF_INET6)",
-            ) {
-                Ok(table) => {
-                    successful_tables += 1;
+                |table| {
                     for row in table {
-                        let remote = Ipv6Addr::from(row.remote_addr);
-                        let remote = canonical_ip(IpAddr::V6(remote));
+                        let remote = canonical_ip(IpAddr::V6(Ipv6Addr::from(row.remote_addr)));
                         if !is_public_ip(remote) {
                             continue;
                         }
@@ -117,10 +113,13 @@ pub(crate) fn list_tcp_connections(limit: usize) -> Result<Vec<TcpConnection>, S
                             break;
                         }
                     }
-                }
+                },
+            ) {
+                Ok(()) => successful_tables += 1,
                 Err(error) => errors.push(error),
             }
         }
+
     }
 
     if successful_tables == 0 {
