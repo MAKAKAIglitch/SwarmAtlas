@@ -214,6 +214,11 @@ class RemoteGeoLocator:
         if not address.is_global:
             return {}
         with self._lock:
+            today = datetime.now(timezone.utc).date().isoformat()
+            if self._usage_day != today:
+                self._usage_day = today
+                self._usage_count = 0
+                self._quota_reached = False
             cached = self._cache.get(ip)
             if cached is not None:
                 self._cache.move_to_end(ip)
