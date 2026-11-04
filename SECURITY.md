@@ -10,7 +10,7 @@ Allowed operations:
 - Read process IDs and, when permitted, process names for observed connections.
 - Read local GeoIP MMDB files selected by the user.
 - Download the public DB-IP Lite City database and Natural Earth map-boundary datasets during first-run setup or scheduled DB-IP refresh. These reference-data downloads do not contain observed peer IPs, process names, PIDs or traffic statistics.
-- Request OpenStreetMap standard raster tiles for the tiles visible in the current map viewport, using the application's own User-Agent. Tile requests contain tile coordinates, not observed endpoint IPs or traffic totals. The local Qt disk cache follows HTTP cache headers and is limited to 128 MiB.
+- Request OpenStreetMap standard raster tiles for the tiles visible in the current map viewport, using the application's own User-Agent. Tile requests contain tile coordinates, not observed endpoint IPs or traffic totals. Separate Qt disk caches for the dashboard and expanded map follow HTTP cache headers and are each limited to 128 MiB.
 - If the user explicitly selects an online GeoIP provider, send the public destination IP being looked up to that selected provider. No process names, PIDs, traffic totals or packet contents are included in the lookup.
 - Install the project's declared Python dependencies and, when available, a verified prebuilt Rust wheel from the project's public GitHub release during Windows first-run setup.
 - Write local settings, provider quota counters, traffic history, endpoint metadata and diagnostics to local application-data/storage directories.
