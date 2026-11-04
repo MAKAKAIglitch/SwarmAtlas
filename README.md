@@ -47,7 +47,12 @@ The online providers are intentionally not queried in parallel: select one sourc
 
 On first launch, DB-IP City Lite is downloaded from the official DB-IP host when offline mode is selected and no valid local copy exists. The file is checked against the publisher's checksum and validated as an MMDB before being installed. A valid cached file remains usable if a later refresh fails. The database refreshes after 30 days. Natural Earth country and Admin-1 boundaries are cached locally. The map uses OpenStreetMap standard raster tiles for place labels and background detail; those tiles are cached according to the server's HTTP cache headers (up to 128 MiB per map view). Without a connection, still-valid cached tiles may be shown; missing or expired tiles fall back to local Natural Earth boundaries.
 
-You can also add local City, Country, ASN or ISP MMDB files using **Local MMDB files…**. The default DB-IP City Lite, Natural Earth map files and separate dashboard/expanded-map OpenStreetMap tile caches are stored in the standard application-data directory.
+You can also add local City, Country, ASN or ISP MMDB files using **Local MMDB files…**. Official compatible download sources:
+
+- [DB-IP Lite downloads](https://db-ip.com/db/lite.php) — choose the **MMDB** format for City, Country or ASN. DB-IP Lite is licensed under CC BY 4.0 and requires attribution.
+- [MaxMind GeoLite2 sign-up](https://www.maxmind.com/en/geolite2/signup) — create a free account, generate a license key, then download the **GeoLite2 City**, **Country** or **ASN** MMDB from the account portal. See the [official download guide](https://support.maxmind.com/knowledge-base/articles/download-and-update-maxmind-databases).
+
+Choose MMDB binary files, not CSV. Extract the `.mmdb` file from `.gz` or `.zip` archives before adding it. Add a City database for region/city names and map coordinates; Country and ASN databases can be combined with it. The default DB-IP City Lite, Natural Earth map files and separate dashboard/expanded-map OpenStreetMap tile caches are stored in the standard application-data directory.
 
 ## Map and regions
 
