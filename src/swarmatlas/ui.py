@@ -52,7 +52,23 @@ def make_label(
 
 
 def update_table(table: QTableWidget, rows: list[list[str]]) -> None:
-    """Update existing cells in place to avoid clearing/recreating tables every second."""
+    """Update table cells only when displayed values actually changed."""
+    if table.rowCount() == len(rows):
+        unchanged = True
+        for row_index, row in enumerate(rows):
+            if len(row) != table.columnCount():
+                unchanged = False
+                break
+            for column_index, value in enumerate(row):
+                item = table.item(row_index, column_index)
+                if item is None or item.text() != value:
+                    unchanged = False
+                    break
+            if not unchanged:
+                break
+        if unchanged:
+            return
+
     table.setUpdatesEnabled(False)
     try:
         table.setRowCount(len(rows))
@@ -326,8 +342,12 @@ class TrafficChart(QWidget):
         self.update()
 
     def set_samples(self, samples: list[dict[str, Any]]) -> None:
-        self.upload = [float(item["upload_bps"]) for item in samples]
-        self.download = [float(item["download_bps"]) for item in samples]
+        upload = [float(item["upload_bps"]) for item in samples]
+        download = [float(item["download_bps"]) for item in samples]
+        if upload == self.upload and download == self.download:
+            return
+        self.upload = upload
+        self.download = download
         self.update()
 
     def paintEvent(self, event: Any) -> None:
@@ -393,6 +413,8 @@ class WorldMap(QWidget):
         self.palette_colors = palette
         self.empty_text = empty_text
         self.locations: list[dict[str, Any]] = []
+        self._location_signature: tuple[tuple[Any, ...], ...] | None = None
+        self._location_world_points: list[QPointF] = []
         self.country_path = QPainterPath()
         self.region_path = QPainterPath()
         self._has_boundaries = False
@@ -425,6 +447,8 @@ class WorldMap(QWidget):
 
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
         valid: list[dict[str, Any]] = []
+        world_points: list[QPointF] = []
+        signature: list[tuple[Any, ...]] = []
         for item in locations:
             try:
                 latitude = float(item["latitude"])
@@ -434,7 +458,23 @@ class WorldMap(QWidget):
             if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
                 continue
             valid.append(item)
+            world_points.append(self._normalized_point(longitude, latitude))
+            signature.append((
+                str(item.get("ip", "")),
+                round(latitude, 6),
+                round(longitude, 6),
+                str(item.get("city") or ""),
+                str(item.get("region") or ""),
+                str(item.get("country") or ""),
+            ))
+
+        new_signature = tuple(signature)
+        if new_signature == self._location_signature:
+            return
+
         self.locations = valid
+        self._location_signature = new_signature
+        self._location_world_points = world_points
         self._hovered_index = None
         self.update()
 
@@ -502,13 +542,19 @@ class WorldMap(QWidget):
             size,
         )
 
-    def _screen_point(self, longitude: float, latitude: float) -> QPointF:
-        rect = self._map_rect()
-        normalized = self._normalized_point(longitude, latitude)
-        world_size = rect.width() * self._zoom
+    def _screen_point_from_normalized(
+        self, normalized: QPointF, rect: QRectF | None = None
+    ) -> QPointF:
+        map_rect = rect or self._map_rect()
+        world_size = map_rect.width() * self._zoom
         return QPointF(
-            rect.center().x() + self._pan.x() + (normalized.x() - 0.5) * world_size,
-            rect.center().y() + self._pan.y() + (normalized.y() - 0.5) * world_size,
+            map_rect.center().x() + self._pan.x() + (normalized.x() - 0.5) * world_size,
+            map_rect.center().y() + self._pan.y() + (normalized.y() - 0.5) * world_size,
+        )
+
+    def _screen_point(self, longitude: float, latitude: float) -> QPointF:
+        return self._screen_point_from_normalized(
+            self._normalized_point(longitude, latitude)
         )
 
     def _zoom_at(self, position: QPointF, factor: float) -> None:
@@ -700,8 +746,9 @@ class WorldMap(QWidget):
             return None
         nearest_index: int | None = None
         nearest_distance = 13.0
-        for index, item in enumerate(self.locations):
-            point = self._screen_point(float(item["longitude"]), float(item["latitude"]))
+        map_rect = self._map_rect()
+        for index, normalized in enumerate(self._location_world_points):
+            point = self._screen_point_from_normalized(normalized, map_rect)
             dx = point.x() - position.x()
             dy = point.y() - position.y()
             distance = (dx * dx + dy * dy) ** 0.5
@@ -743,11 +790,8 @@ class WorldMap(QWidget):
                 self.empty_text,
             )
         else:
-            for index, item in enumerate(self.locations):
-                point = self._screen_point(
-                    float(item["longitude"]),
-                    float(item["latitude"]),
-                )
+            for index, normalized in enumerate(self._location_world_points):
+                point = self._screen_point_from_normalized(normalized, map_rect)
                 if not map_rect.adjusted(-8, -8, 8, 8).contains(point):
                     continue
                 painter.setPen(QPen(QColor(colors["accent"]), 1))
