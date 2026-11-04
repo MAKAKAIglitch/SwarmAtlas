@@ -11,6 +11,13 @@ from swarmatlas.config import AppConfig
 Address = namedtuple("Address", "ip port")
 
 
+def test_power_saver_is_only_enabled_outside_the_foreground() -> None:
+    assert not collector.should_use_power_saver(application_active=True, minimized=False)
+    assert collector.should_use_power_saver(application_active=False, minimized=False)
+    assert collector.should_use_power_saver(application_active=True, minimized=True)
+    assert collector.should_use_power_saver(application_active=False, minimized=True)
+
+
 def test_minimized_window_polling_profile_reduces_background_work() -> None:
     normal = collector.sampling_intervals(False)
     power_saver = collector.sampling_intervals(True)

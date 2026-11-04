@@ -47,6 +47,11 @@ VIRTUAL_MARKERS = (
 _PROCESS_NAME_CACHE: dict[int, tuple[float, str | None]] = {}
 
 
+def should_use_power_saver(*, application_active: bool, minimized: bool) -> bool:
+    """Use the slower profile only while the application is outside the foreground."""
+    return minimized or not application_active
+
+
 def sampling_intervals(power_saver_enabled: bool) -> tuple[float, float, float]:
     """Return counter, interface-check and endpoint-scan intervals for the current window state."""
     if power_saver_enabled:

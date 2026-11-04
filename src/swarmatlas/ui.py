@@ -1045,7 +1045,14 @@ class MainWindow(QMainWindow):
         self.worker.startup_ready.connect(self._on_worker_startup)
         self.worker.map_data_ready.connect(self._set_map_boundaries)
 
+        application = QGuiApplication.instance()
+        if application is not None:
+            application.applicationStateChanged.connect(
+                self._update_collector_power_profile
+            )
+
         self._build_ui()
+        self._update_collector_power_profile()
         self._style_hints = QGuiApplication.styleHints()
         color_signal = getattr(self._style_hints, "colorSchemeChanged", None)
         if color_signal is not None:
@@ -1376,11 +1383,25 @@ class MainWindow(QMainWindow):
         outer.addWidget(scroll, 1)
         self.setCentralWidget(root)
 
+    def _update_collector_power_profile(self, *_args: Any) -> None:
+        worker = getattr(self, "worker", None)
+        if worker is None:
+            return
+        application = QGuiApplication.instance()
+        application_active = (
+            application is not None
+            and application.applicationState() == Qt.ApplicationState.ApplicationActive
+        )
+        worker.set_power_saver_mode(
+            collector.should_use_power_saver(
+                application_active=application_active,
+                minimized=self.isMinimized(),
+            )
+        )
+
     def showEvent(self, event: Any) -> None:
         super().showEvent(event)
-        worker = getattr(self, "worker", None)
-        if worker is not None:
-            worker.set_power_saver_mode(self.isMinimized())
+        self._update_collector_power_profile()
         if not self._mica_attempted:
             self._mica_attempted = True
             self._mica_applied = apply_windows_mica(
@@ -1391,9 +1412,8 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
-        worker = getattr(self, "worker", None)
-        if worker is not None and event.type() == QEvent.Type.WindowStateChange:
-            worker.set_power_saver_mode(self.isMinimized())
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._update_collector_power_profile()
 
     def _on_system_theme_changed(self, *_args: Any) -> None:
         if self.config.theme == "system":
