@@ -51,15 +51,16 @@ fn api_error(name: &str, code: u32) -> String {
     format!("{name} failed with Windows error {code}")
 }
 
-unsafe fn query_rows<T: Copy>(
+unsafe fn query_rows_with<T: Copy, R>(
     query: QueryTable,
     family: u32,
     table_class: i32,
     limit: usize,
     name: &str,
-) -> Result<Vec<T>, String> {
+    visitor: impl FnOnce(&[T]) -> R,
+) -> Result<R, String> {
     if limit == 0 {
-        return Ok(Vec::new());
+        return Ok(visitor(&[]));
     }
     let mut required_bytes = 0_u32;
     let first_status = query(null_mut(), &mut required_bytes, 0, family, table_class, 0);
@@ -68,7 +69,7 @@ unsafe fn query_rows<T: Copy>(
         return Err(api_error(name, first_status));
     }
     if required_bytes == 0 {
-        return Ok(Vec::new());
+        return Ok(visitor(&[]));
     }
 
     for _ in 0..MAX_RESIZE_ATTEMPTS {
@@ -113,14 +114,28 @@ unsafe fn query_rows<T: Copy>(
             ));
         }
 
-        let rows_to_copy = row_count.min(limit);
+        // Visit the bounded OS-owned row slice while its aligned buffer is alive.
+        // TCP can filter and collect only public results here, avoiding a second
+        // allocation and copy of up to 100,000 MIB rows.
+        let rows_to_visit = row_count.min(limit);
         let rows_ptr = base.add(1).cast::<T>();
-        return Ok(slice::from_raw_parts(rows_ptr, rows_to_copy).to_vec());
+        let rows = slice::from_raw_parts(rows_ptr, rows_to_visit);
+        return Ok(visitor(rows));
     }
 
     Err(format!(
         "{name} table kept changing size after {MAX_RESIZE_ATTEMPTS} attempts"
     ))
+}
+
+unsafe fn query_rows<T: Copy>(
+    query: QueryTable,
+    family: u32,
+    table_class: i32,
+    limit: usize,
+    name: &str,
+) -> Result<Vec<T>, String> {
+    query_rows_with(query, family, table_class, limit, name, |rows| rows.to_vec())
 }
 
 pub(super) unsafe fn query_tcp_rows<T: Copy>(
@@ -130,6 +145,16 @@ pub(super) unsafe fn query_tcp_rows<T: Copy>(
     name: &str,
 ) -> Result<Vec<T>, String> {
     query_rows(GetExtendedTcpTable, family, table_class, limit, name)
+}
+
+pub(super) unsafe fn query_tcp_rows_with<T: Copy, R>(
+    family: u32,
+    table_class: i32,
+    limit: usize,
+    name: &str,
+    visitor: impl FnOnce(&[T]) -> R,
+) -> Result<R, String> {
+    query_rows_with(GetExtendedTcpTable, family, table_class, limit, name, visitor)
 }
 
 pub(super) unsafe fn query_udp_rows<T: Copy>(
