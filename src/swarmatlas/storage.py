@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sqlite3
 import threading
 import time
@@ -7,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 
-DESTINATION_RETENTION_SEC = 30 * 24 * 60 * 60
+DESTINATION_RETENTION_SEC = 5 * 365 * 24 * 60 * 60
+HISTORY_RETENTION_SEC = 5 * 365 * 24 * 60 * 60
+HISTORY_RAW_RETENTION_SEC = 7 * 24 * 60 * 60
+MAX_DESTINATION_ROWS = 200_000
+MAX_HISTORY_POINTS = 1800
 
 DESTINATION_COLUMNS = (
     "ip",
@@ -30,7 +35,7 @@ DESTINATION_COLUMNS = (
     "longitude",
     "active",
 )
-DESTINATION_PRIMARY_KEY = ["ip", "port", "protocol", "process_id", "local_port"]
+DESTINATION_PRIMARY_KEY = ["ip", "port", "protocol", "process_id"]
 
 
 class Store:
@@ -44,6 +49,18 @@ class Store:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.execute("PRAGMA busy_timeout=5000")
+        self._db.execute("PRAGMA cache_size=-4096")
+        self._db.execute("PRAGMA temp_store=MEMORY")
+        self._db.execute("PRAGMA mmap_size=33554432")
+        self._db.execute("PRAGMA journal_size_limit=4194304")
+        # Enable incremental page reclamation for newly created databases.
+        # Existing databases keep their current auto-vacuum mode unchanged.
+        has_tables = self._db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
+        ).fetchone()
+        if not has_tables:
+            self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
+        self._last_compaction = 0.0
         self._create_schema()
 
     def _create_schema(self) -> None:
@@ -68,6 +85,15 @@ class Store:
                 CREATE INDEX IF NOT EXISTS idx_samples_timestamp
                     ON traffic_samples(timestamp);
 
+                CREATE TABLE IF NOT EXISTS traffic_hourly (
+                    hour_start INTEGER PRIMARY KEY,
+                    upload_bps_avg REAL NOT NULL,
+                    download_bps_avg REAL NOT NULL,
+                    upload_bps_max REAL NOT NULL,
+                    download_bps_max REAL NOT NULL,
+                    sample_count INTEGER NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS destinations (
                     ip TEXT NOT NULL,
                     port INTEGER NOT NULL,
@@ -88,7 +114,7 @@ class Store:
                     latitude REAL,
                     longitude REAL,
                     active INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (ip, port, protocol, process_id, local_port)
+                    PRIMARY KEY (ip, port, protocol, process_id)
                 );
                 """
             )
@@ -153,15 +179,34 @@ class Store:
                 latitude REAL,
                 longitude REAL,
                 active INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (ip, port, protocol, process_id, local_port)
+                PRIMARY KEY (ip, port, protocol, process_id)
             )
             """
         )
+        # Old databases may not have process_id or local_port columns. Build
+        # aggregation expressions from the source schema before grouping.
+        source_pid = "COALESCE(process_id, 0)" if "process_id" in existing else "CAST(0 AS INTEGER)"
+        aggregates: dict[str, str] = {}
+        for column in DESTINATION_COLUMNS:
+            if column not in existing:
+                aggregates[column] = defaults[column]
+            elif column == "process_id":
+                aggregates[column] = source_pid
+            elif column == "local_port":
+                aggregates[column] = "MAX(COALESCE(local_port, 0))"
+            elif column == "first_seen":
+                aggregates[column] = "MIN(first_seen)"
+            elif column in {"last_seen", "active"}:
+                aggregates[column] = f"MAX({column})"
+            else:
+                aggregates[column] = f"MAX({column})"
+
         columns_sql = ", ".join(DESTINATION_COLUMNS)
-        expressions_sql = ", ".join(select_expressions)
+        expressions_sql = ", ".join(aggregates[column] for column in DESTINATION_COLUMNS)
         self._db.execute(
-            f"INSERT INTO destinations_migration ({columns_sql}) "
-            f"SELECT {expressions_sql} FROM destinations"
+            f"INSERT OR REPLACE INTO destinations_migration ({columns_sql}) "
+            "SELECT " + expressions_sql + " FROM destinations "
+            "GROUP BY ip, port, protocol, " + source_pid
         )
         self._db.execute("DROP TABLE destinations")
         self._db.execute("ALTER TABLE destinations_migration RENAME TO destinations")
@@ -219,10 +264,94 @@ class Store:
                 "INSERT INTO traffic_samples(timestamp, upload_bps, download_bps) VALUES (?, ?, ?)",
                 (timestamp, max(0.0, upload_bps), max(0.0, download_bps)),
             )
+            if timestamp - self._last_compaction >= 3600:
+                self._compact_history(timestamp)
+                self._last_compaction = timestamp
+
+    def _compact_history(self, timestamp: float) -> None:
+        """Fold samples older than seven days into compact hourly aggregates."""
+        # Compact only complete hour buckets; otherwise a bucket straddling the cutoff
+        # would appear both in the hourly table and in the still-raw samples.
+        cutoff = math.floor((timestamp - HISTORY_RAW_RETENTION_SEC) / 3600) * 3600
+        with self._lock, self._db:
             self._db.execute(
-                "DELETE FROM traffic_samples WHERE timestamp < ?",
-                (timestamp - 60 * 60 * 24 * 90,),
+                """
+                INSERT INTO traffic_hourly (
+                    hour_start, upload_bps_avg, download_bps_avg,
+                    upload_bps_max, download_bps_max, sample_count
+                )
+                SELECT
+                    CAST(timestamp / 3600 AS INTEGER) * 3600,
+                    AVG(upload_bps), AVG(download_bps),
+                    MAX(upload_bps), MAX(download_bps), COUNT(*)
+                FROM traffic_samples
+                WHERE timestamp < ?
+                GROUP BY CAST(timestamp / 3600 AS INTEGER)
+                ON CONFLICT(hour_start) DO UPDATE SET
+                    upload_bps_avg = (
+                        traffic_hourly.upload_bps_avg * traffic_hourly.sample_count
+                        + excluded.upload_bps_avg * excluded.sample_count
+                    ) / (traffic_hourly.sample_count + excluded.sample_count),
+                    download_bps_avg = (
+                        traffic_hourly.download_bps_avg * traffic_hourly.sample_count
+                        + excluded.download_bps_avg * excluded.sample_count
+                    ) / (traffic_hourly.sample_count + excluded.sample_count),
+                    upload_bps_max = MAX(traffic_hourly.upload_bps_max, excluded.upload_bps_max),
+                    download_bps_max = MAX(traffic_hourly.download_bps_max, excluded.download_bps_max),
+                    sample_count = traffic_hourly.sample_count + excluded.sample_count
+                """,
+                (cutoff,),
             )
+            self._db.execute("DELETE FROM traffic_samples WHERE timestamp < ?", (cutoff,))
+            self._db.execute(
+                "DELETE FROM traffic_hourly WHERE hour_start < ?",
+                (timestamp - HISTORY_RETENTION_SEC,),
+            )
+            self._db.execute("PRAGMA incremental_vacuum(128)")
+
+    def history(self, range_seconds: int, now: float | None = None) -> list[dict[str, float]]:
+        """Return downsampled traffic history for ranges up to five years."""
+        current = now if now is not None else time.time()
+        seconds = max(60, min(int(range_seconds), HISTORY_RETENTION_SEC))
+        start = current - seconds
+        bucket = max(10, math.ceil(seconds / MAX_HISTORY_POINTS))
+        with self._lock:
+            if seconds <= HISTORY_RAW_RETENTION_SEC:
+                rows = self._db.execute(
+                    """
+                    SELECT CAST(timestamp / ? AS INTEGER) * ? AS timestamp,
+                           AVG(upload_bps) AS upload_bps,
+                           AVG(download_bps) AS download_bps
+                    FROM traffic_samples
+                    WHERE timestamp >= ?
+                    GROUP BY CAST(timestamp / ? AS INTEGER)
+                    ORDER BY timestamp
+                    """,
+                    (bucket, bucket, start, bucket),
+                ).fetchall()
+            else:
+                rows = self._db.execute(
+                    """
+                    SELECT
+                        CAST(timestamp / ? AS INTEGER) * ? AS timestamp,
+                        SUM(upload_bps * sample_weight) / SUM(sample_weight) AS upload_bps,
+                        SUM(download_bps * sample_weight) / SUM(sample_weight) AS download_bps
+                    FROM (
+                        SELECT timestamp, upload_bps, download_bps, 1 AS sample_weight
+                        FROM traffic_samples WHERE timestamp >= ?
+                        UNION ALL
+                        SELECT hour_start AS timestamp,
+                               upload_bps_avg AS upload_bps,
+                               download_bps_avg AS download_bps,
+                               sample_count AS sample_weight
+                        FROM traffic_hourly WHERE hour_start >= ?
+                    )
+                    GROUP BY CAST(timestamp / ? AS INTEGER)
+                    ORDER BY timestamp
+                    """,
+                    (bucket, bucket, start, start, bucket),
+                ).fetchall()
+        return [dict(row) for row in rows]
 
     def update_destinations(self, endpoints: list[dict[str, Any]], timestamp: float) -> None:
         with self._lock, self._db:
@@ -239,8 +368,9 @@ class Store:
                         connection_state, first_seen, last_seen, country_code, country,
                         region, city, asn, organization, isp, latitude, longitude, active
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-                    ON CONFLICT(ip, port, protocol, process_id, local_port) DO UPDATE SET
+                    ON CONFLICT(ip, port, protocol, process_id) DO UPDATE SET
                         last_seen = excluded.last_seen,
+                        local_port = excluded.local_port,
                         process_name = COALESCE(excluded.process_name, destinations.process_name),
                         connection_state = COALESCE(excluded.connection_state, destinations.connection_state),
                         country_code = COALESCE(excluded.country_code, destinations.country_code),
@@ -274,6 +404,21 @@ class Store:
                         item.get("latitude"),
                         item.get("longitude"),
                     ),
+                )
+
+            row_count = int(self._db.execute("SELECT COUNT(*) FROM destinations").fetchone()[0])
+            excess = row_count - MAX_DESTINATION_ROWS
+            if excess > 0:
+                victims = self._db.execute(
+                    """
+                    SELECT ip, port, protocol, process_id FROM destinations
+                    ORDER BY active ASC, last_seen ASC LIMIT ?
+                    """,
+                    (excess,),
+                ).fetchall()
+                self._db.executemany(
+                    "DELETE FROM destinations WHERE ip = ? AND port = ? AND protocol = ? AND process_id = ?",
+                    [tuple(row) for row in victims],
                 )
 
     def summary(self, interface: str, now: float | None = None) -> dict[str, Any]:
@@ -339,7 +484,11 @@ class Store:
 
     def close(self) -> None:
         with self._lock:
-            self._db.close()
+            try:
+                self._db.execute("PRAGMA optimize")
+                self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                self._db.close()
 
 
 ENDPOINT_ACTIVE_WINDOW_SEC = 30

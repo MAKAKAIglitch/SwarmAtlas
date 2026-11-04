@@ -4,6 +4,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Iterable
 
+from .geoip_remote import RemoteGeoLocator
+
 
 class GeoLocator:
     """Read-only offline GeoIP lookup across several selected MMDB files."""
@@ -11,7 +13,13 @@ class GeoLocator:
     CACHE_LIMIT = 8192
     WARMUP_ADDRESSES = ("1.1.1.1", "8.8.8.8")
 
-    def __init__(self, database_paths: str | Iterable[str] = "", language: str = "en"):
+    def __init__(
+        self,
+        database_paths: str | Iterable[str] = "",
+        language: str = "en",
+        provider: str = "dbip",
+        api_key: str = "",
+    ):
         if isinstance(database_paths, str):
             paths = [database_paths] if database_paths else []
         else:
@@ -20,7 +28,13 @@ class GeoLocator:
         self._readers: list[tuple[str, Any, str]] = []
         self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._errors: list[str] = []
+        self._remote: RemoteGeoLocator | None = None
         self.status = "GeoIP database not configured"
+
+        if provider != "dbip":
+            self._remote = RemoteGeoLocator(provider, api_key)
+            self.status = self._remote.status
+            return
 
         selected = [Path(value).expanduser() for value in paths if str(value).strip()]
         if not selected:
@@ -93,6 +107,11 @@ class GeoLocator:
                     continue
 
     def lookup(self, ip: str) -> dict[str, Any]:
+        if self._remote is not None:
+            result = self._remote.lookup(ip)
+            self.status = self._remote.status
+            return result
+
         cached = self._cache.get(ip)
         if cached is not None:
             self._cache.move_to_end(ip)
@@ -135,6 +154,9 @@ class GeoLocator:
         return dict(result)
 
     def close(self) -> None:
+        if self._remote is not None:
+            self._remote.close()
+            self._remote = None
         self._cache.clear()
         for _, reader, _ in self._readers:
             try:

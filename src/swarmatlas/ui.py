@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import sqlite3
 from typing import Any
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, Signal, Slot
@@ -9,7 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
-    QTableWidgetItem, QToolTip, QVBoxLayout, QWidget,
+    QTableWidgetItem, QToolTip, QVBoxLayout, QWidget, QLineEdit,
 )
 
 from .collector import NetworkWorker, available_interfaces
@@ -182,6 +184,107 @@ class GeoIPDatabaseDialog(QDialog):
             str(self.items.item(index).data(Qt.ItemDataRole.UserRole))
             for index in range(self.items.count())
         ]
+
+
+class GeoIPProviderDialog(QDialog):
+    PROVIDERS = (
+        ("dbip", "provider_dbip"),
+        ("ip-api", "provider_ip_api"),
+        ("ipdata", "provider_ipdata"),
+        ("ipapi-is", "provider_ipapi_is"),
+        ("ipinfo-lite", "provider_ipinfo"),
+        ("ip2location", "provider_ip2location"),
+        ("2ip", "provider_2ip"),
+    )
+
+    def __init__(
+        self,
+        provider: str,
+        api_keys: dict[str, str],
+        language: str,
+        palette: dict[str, str],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.language = language
+        self.palette = palette
+        self.api_keys = dict(api_keys)
+        self._active_provider = provider
+        self.setWindowTitle(tr("geoip_settings", language))
+        self.setMinimumWidth(560)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        intro = make_label(tr("geoip_provider_intro", language), 10, palette["text"])
+        intro.setWordWrap(True)
+        privacy = make_label(tr("geoip_provider_privacy", language), 9, palette["muted"])
+        privacy.setWordWrap(True)
+        layout.addWidget(intro)
+        layout.addWidget(privacy)
+
+        self.provider_combo = QComboBox()
+        for provider_id, label_key in self.PROVIDERS:
+            self.provider_combo.addItem(tr(label_key, language), provider_id)
+        selected = self.provider_combo.findData(provider)
+        self.provider_combo.setCurrentIndex(max(0, selected))
+        layout.addWidget(self.provider_combo)
+
+        self.key_label = make_label(tr("geoip_api_key", language), 9, palette["muted"], 600)
+        layout.addWidget(self.key_label)
+        self.api_key_input = QLineEdit(self.api_keys.get(provider, ""))
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_input.setPlaceholderText(tr("geoip_api_key_placeholder", language))
+        layout.addWidget(self.api_key_input)
+
+        self.info_label = make_label("", 9, palette["muted"])
+        self.info_label.setWordWrap(True)
+        layout.addWidget(self.info_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.provider_combo.currentIndexChanged.connect(self._sync_provider)
+        self._sync_provider()
+
+        self.setStyleSheet(
+            f"QDialog {{ background: {palette['bg']}; color: {palette['text']}; }}"
+            f"QComboBox, QLineEdit {{ background: {palette['surface']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 7px; padding: 7px; }}"
+            f"QPushButton {{ background: {palette['surface_alt']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 7px; padding: 7px 11px; }}"
+        )
+
+    def _sync_provider(self, *_args: Any) -> None:
+        provider = str(self.provider_combo.currentData() or "dbip")
+        if provider != self._active_provider:
+            self.api_keys[self._active_provider] = self.api_key_input.text().strip()
+            self._active_provider = provider
+            self.api_key_input.setText(self.api_keys.get(provider, ""))
+        accepts_token = provider in {"ipdata", "ipapi-is", "ipinfo-lite", "ip2location", "2ip"}
+        self.key_label.setVisible(accepts_token)
+        self.api_key_input.setVisible(accepts_token)
+        self.api_key_input.setEnabled(accepts_token)
+        if provider == "dbip":
+            message_key = "provider_note_dbip"
+        else:
+            message_key = f"provider_note_{provider.replace('-', '_')}"
+        self.info_label.setText(tr(message_key, self.language))
+
+    def selected_provider(self) -> str:
+        return str(self.provider_combo.currentData() or "dbip")
+
+    def selected_api_keys(self) -> dict[str, str]:
+        values = dict(self.api_keys)
+        current_provider = self.selected_provider()
+        current_key = self.api_key_input.text().strip()
+        if current_key:
+            values[current_provider] = current_key
+        else:
+            values.pop(current_provider, None)
+        return values
 
 
 class TrafficChart(QWidget):
@@ -775,8 +878,18 @@ class MainWindow(QMainWindow):
 
         self.geoip_button = QPushButton(self.t("geoip_settings"))
         self.geoip_button.setObjectName("quiet")
-        self.geoip_button.clicked.connect(self.choose_geoip_databases)
+        self.geoip_button.clicked.connect(self.configure_geoip_provider)
         side.addWidget(self.geoip_button)
+
+        self.geoip_database_button = QPushButton(self.t("geoip_local_database"))
+        self.geoip_database_button.setObjectName("quiet")
+        self.geoip_database_button.clicked.connect(self.choose_geoip_databases)
+        side.addWidget(self.geoip_database_button)
+
+        self.database_location_button = QPushButton(self.t("database_location"))
+        self.database_location_button.setObjectName("quiet")
+        self.database_location_button.clicked.connect(self.choose_database_directory)
+        side.addWidget(self.database_location_button)
 
         content = QWidget()
         content.setObjectName("content")
@@ -806,6 +919,11 @@ class MainWindow(QMainWindow):
         self.live_status = make_label(self.t("starting"), 10, self.palette["accent"], 600)
         header.addWidget(self.live_status)
         content_layout.addLayout(header)
+
+        self.transfer_status = make_label(self.t("transfer_waiting"), 10, self.palette["text"], 600)
+        self.transfer_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.transfer_status.setMinimumHeight(26)
+        content_layout.addWidget(self.transfer_status)
 
         metrics = QHBoxLayout()
         metrics.setSpacing(12)
@@ -891,14 +1009,25 @@ class MainWindow(QMainWindow):
         chart_layout.setContentsMargins(18, 16, 18, 12)
         chart_title = QHBoxLayout()
         self.chart_title = make_label(self.t("traffic_history"), 13, self.palette["text"], 600)
-        self.chart_period = make_label(self.t("last_hour"), 9, self.palette["muted"])
         chart_title.addWidget(self.chart_title)
         chart_title.addStretch(1)
-        chart_title.addWidget(self.chart_period)
+        self.history_combo = QComboBox()
+        for label_key, seconds in (
+            ("last_hour", 3600),
+            ("history_24h", 86400),
+            ("history_7d", 7 * 86400),
+            ("history_30d", 30 * 86400),
+            ("history_1y", 365 * 86400),
+            ("history_5y", 5 * 365 * 86400),
+        ):
+            self.history_combo.addItem(self.t(label_key), seconds)
+        self.history_combo.currentIndexChanged.connect(self.change_history_range)
+        chart_title.addWidget(self.history_combo)
         chart_layout.addLayout(chart_title)
         self.chart = TrafficChart(self.palette, self.t("history_empty"))
         chart_layout.addWidget(self.chart)
         bottom.addWidget(chart_card, 6)
+        self.chart_card = chart_card
 
         peers_card = card()
         peers_layout = QVBoxLayout(peers_card)
@@ -921,6 +1050,7 @@ class MainWindow(QMainWindow):
         self.endpoint_table.setShowGrid(False)
         peers_layout.addWidget(self.endpoint_table)
         bottom.addWidget(peers_card, 5)
+        self.peers_card = peers_card
         content_layout.addLayout(bottom)
 
         self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
@@ -929,6 +1059,7 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
+        self.scroll_area = scroll
         outer.addWidget(sidebar)
         outer.addWidget(scroll, 1)
         self.setCentralWidget(root)
@@ -971,14 +1102,105 @@ class MainWindow(QMainWindow):
             button.setProperty("active", active)
             button.style().unpolish(button)
             button.style().polish(button)
-        if key != "overview":
-            QMessageBox.information(self, self.t(key), self.t("page_coming", page=self.t(key)))
+        self.page_title.setText(self.t("overview_title") if key == "overview" else self.t(key))
+        if key == "history":
+            self.scroll_area.ensureWidgetVisible(self.chart_card, 20, 20)
+        elif key == "destinations":
+            self.scroll_area.ensureWidgetVisible(self.peers_card, 20, 20)
+        else:
+            self.scroll_area.verticalScrollBar().setValue(0)
 
     def change_interface(self) -> None:
         interface = str(self.interface_combo.currentData() or "auto")
         self.config.interface = interface
         self.config.save()
         self.worker.set_interface(interface)
+
+    def configure_geoip_provider(self) -> None:
+        dialog = GeoIPProviderDialog(
+            self.config.geoip_provider,
+            self.config.geoip_api_keys,
+            self.current_language,
+            self.palette,
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.config.geoip_provider = dialog.selected_provider()
+        self.config.geoip_api_keys = dialog.selected_api_keys()
+        self.config.geoip_api_key = self.config.geoip_api_keys.get(
+            self.config.geoip_provider, ""
+        )
+        self.config.save()
+        self.worker.set_geoip_provider(self.config.geoip_provider, self.config.geoip_api_key)
+        self.map_attribution_label.setText(self._map_attribution_html())
+        self.statusBar().showMessage(self.t("geoip_provider_saved"))
+
+    def choose_database_directory(self) -> None:
+        from .config import database_path
+
+        current_path = database_path(self.config)
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            self.t("database_location"),
+            str(current_path.parent),
+        )
+        if not folder:
+            return
+        selected_dir = Path(folder).expanduser().resolve()
+        if selected_dir == current_path.parent.resolve():
+            return
+        target_path = selected_dir / "swarmatlas.sqlite3"
+        if target_path.exists():
+            answer = QMessageBox.question(
+                self,
+                self.t("database_location"),
+                self.t("database_existing_confirm", path=str(target_path)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        if self.worker.isRunning() and not self.worker.stop():
+            QMessageBox.warning(self, self.t("stopping_title"), self.t("stopping_message"))
+            return
+
+        previous_directory = self.config.database_directory
+        try:
+            selected_dir.mkdir(parents=True, exist_ok=True)
+            if target_path.exists():
+                check_db = sqlite3.connect(str(target_path), timeout=5.0)
+                try:
+                    check_result = check_db.execute("PRAGMA quick_check").fetchone()
+                finally:
+                    check_db.close()
+                if not check_result or str(check_result[0]).lower() != "ok":
+                    raise sqlite3.DatabaseError(
+                        f"Selected database failed SQLite quick_check: {check_result!r}"
+                    )
+            elif current_path.is_file():
+                shutil.copy2(current_path, target_path)
+            self.config.database_directory = str(selected_dir)
+            self.config.save()
+            self.worker.restart()
+            self.statusBar().showMessage(
+                self.t("database_location_saved", path=str(target_path))
+            )
+        except Exception as exc:
+            self.config.database_directory = previous_directory
+            self.config.save()
+            if not self.worker.isRunning():
+                self.worker.restart()
+            QMessageBox.warning(
+                self,
+                self.t("database_location"),
+                f"{type(exc).__name__}: {exc}",
+            )
+
+    def change_history_range(self) -> None:
+        seconds = int(self.history_combo.currentData() or 3600)
+        self.worker.set_history_range(seconds)
 
     def choose_geoip_databases(self) -> None:
         dialog = GeoIPDatabaseDialog(
@@ -992,8 +1214,12 @@ class MainWindow(QMainWindow):
         paths = dialog.selected_paths()
         self.config.geoip_databases = paths
         self.config.geoip_database = paths[0] if paths else ""
+        self.config.geoip_provider = "dbip"
+        self.config.geoip_api_key = ""
         self.config.save()
         self.worker.set_geoip_databases(paths)
+        self.worker.set_geoip_provider("dbip", self.config.geoip_api_key)
+        self.map_attribution_label.setText(self._map_attribution_html())
         self.statusBar().showMessage(self.t("preparing") if paths else self.t("geoip_missing"))
 
     def update_geo_status(self, status: str) -> None:
@@ -1012,14 +1238,23 @@ class MainWindow(QMainWindow):
             )
 
     def _map_attribution_html(self) -> str:
-        return (
-            self.t("map_attribution")
-            .replace("DB-IP.com", '<a href="https://db-ip.com">DB-IP.com</a>')
-            .replace(
-                "Natural Earth",
-                '<a href="https://www.naturalearthdata.com/">Natural Earth</a>',
-            )
-        )
+        sources = {
+            "dbip": ("DB-IP.com", "https://db-ip.com"),
+            "ip-api": ("IP-API.com", "https://ip-api.com"),
+            "ipdata": ("ipdata.co", "https://ipdata.co"),
+            "ipapi-is": ("ipapi.is", "https://ipapi.is"),
+            "ipinfo-lite": ("IPinfo Lite", "https://ipinfo.io/lite"),
+            "ip2location": ("IP2Location.io", "https://www.ip2location.io"),
+            "2ip": ("2ip.io", "https://2ip.io"),
+        }
+        name, url = sources.get(self.config.geoip_provider, sources["dbip"])
+        source_link = f'<a href="{url}">{name}</a>'
+        natural_earth = '<a href="https://www.naturalearthdata.com/">Natural Earth</a>'
+        if self.config.geoip_provider in {"ipdata", "ip2location"}:
+            return self.t(
+                f"map_attribution_{self.config.geoip_provider}"
+            ).format(boundaries=natural_earth)
+        return self.t("map_attribution").format(source=source_link, boundaries=natural_earth)
 
     def open_map_dialog(self) -> None:
         attribution = self._map_attribution_html()
@@ -1048,8 +1283,12 @@ class MainWindow(QMainWindow):
         self.upload_card.set_value(format_bytes(upload), self.t("selected_saved"))
         self.download_card.set_value(format_bytes(download), self.t("selected_saved"))
         self.rate_card.set_value(
-            f"{format_rate(up_rate)}  ↑",
-            f"{format_rate(down_rate)}  ↓",
+            f"↑ {format_rate(up_rate)}",
+            f"↓ {format_rate(down_rate)}",
+        )
+        self.transfer_status.setText(
+            f"↑ {self.t('sending')}: {format_rate(up_rate)}  ·  "
+            f"↓ {self.t('receiving')}: {format_rate(down_rate)}"
         )
         endpoints = snapshot.get("active_endpoints", [])
         self.live_status.setText(self.t("monitoring", count=len(endpoints)))
