@@ -365,6 +365,7 @@ class Store:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                     ON CONFLICT(ip, port, protocol, process_id) DO UPDATE SET
                         last_seen = excluded.last_seen,
+                        local_port = excluded.local_port,
                         process_name = COALESCE(excluded.process_name, destinations.process_name),
                         connection_state = COALESCE(excluded.connection_state, destinations.connection_state),
                         country_code = COALESCE(excluded.country_code, destinations.country_code),
@@ -398,6 +399,21 @@ class Store:
                         item.get("latitude"),
                         item.get("longitude"),
                     ),
+                )
+
+            row_count = int(self._db.execute("SELECT COUNT(*) FROM destinations").fetchone()[0])
+            excess = row_count - MAX_DESTINATION_ROWS
+            if excess > 0:
+                victims = self._db.execute(
+                    """
+                    SELECT ip, port, protocol, process_id FROM destinations
+                    ORDER BY active ASC, last_seen ASC LIMIT ?
+                    """,
+                    (excess,),
+                ).fetchall()
+                self._db.executemany(
+                    "DELETE FROM destinations WHERE ip = ? AND port = ? AND protocol = ? AND process_id = ?",
+                    [tuple(row) for row in victims],
                 )
 
     def summary(self, interface: str, now: float | None = None) -> dict[str, Any]:
