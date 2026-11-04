@@ -9,7 +9,7 @@ import sqlite3
 import time
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
+from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
@@ -1378,6 +1378,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event: Any) -> None:
         super().showEvent(event)
+        self.worker.set_power_saver_mode(self.isMinimized())
         if not self._mica_attempted:
             self._mica_attempted = True
             self._mica_applied = apply_windows_mica(
@@ -1385,6 +1386,11 @@ class MainWindow(QMainWindow):
             )
             if self._mica_applied:
                 self._apply_theme()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.worker.set_power_saver_mode(self.isMinimized())
 
     def _on_system_theme_changed(self, *_args: Any) -> None:
         if self.config.theme == "system":

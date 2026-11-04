@@ -12,7 +12,11 @@ fn project(longitude: f64, latitude: f64) -> (f64, f64) {
 }
 
 #[inline]
-fn segment_distance_squared(point: (f64, f64), start: (f64, f64), end: (f64, f64)) -> f64 {
+fn segment_distance_squared(
+    point: (f64, f64),
+    start: (f64, f64),
+    end: (f64, f64),
+) -> f64 {
     let dx = end.0 - start.0;
     let dy = end.1 - start.1;
     if dx == 0.0 && dy == 0.0 {
@@ -21,8 +25,10 @@ fn segment_distance_squared(point: (f64, f64), start: (f64, f64), end: (f64, f64
         return px * px + py * py;
     }
 
-    let projection = (((point.0 - start.0) * dx + (point.1 - start.1) * dy) / (dx * dx + dy * dy))
-        .clamp(0.0, 1.0);
+    let projection =
+        (((point.0 - start.0) * dx + (point.1 - start.1) * dy)
+            / (dx * dx + dy * dy))
+            .clamp(0.0, 1.0);
     let nearest_x = start.0 + projection * dx;
     let nearest_y = start.1 + projection * dy;
     let px = point.0 - nearest_x;
@@ -81,7 +87,10 @@ fn douglas_peucker(points: &[(f64, f64)], tolerance: f64) -> Vec<(f64, f64)> {
 ///
 /// The thresholds intentionally match the Python implementation: a 25% radial
 /// pre-filter followed by a 75% Douglas-Peucker tolerance budget.
-pub(crate) fn project_and_simplify_ring(points: &[(f64, f64)], tolerance: f64) -> Vec<(f64, f64)> {
+pub(crate) fn project_and_simplify_ring(
+    points: &[(f64, f64)],
+    tolerance: f64,
+) -> Vec<(f64, f64)> {
     if points.len() <= 2 || tolerance <= 0.0 {
         return points
             .iter()
@@ -132,7 +141,12 @@ mod tests {
 
     #[test]
     fn radial_and_douglas_peucker_simplification_keep_endpoints() {
-        let line = [(0.0, 0.0), (0.2, 0.000_001), (0.4, -0.000_001), (0.6, 0.0)];
+        let line = [
+            (0.0, 0.0),
+            (0.2, 0.000_001),
+            (0.4, -0.000_001),
+            (0.6, 0.0),
+        ];
         let simplified = project_and_simplify_ring(&line, 0.001);
         assert_eq!(simplified.len(), 2);
         assert_eq!(simplified.first(), Some(&project(0.0, 0.0)));
