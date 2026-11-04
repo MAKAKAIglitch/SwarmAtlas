@@ -363,7 +363,12 @@ class WorldMap(QWidget):
     MAX_DISK_CACHE_BYTES = 128 * 1024 * 1024
     MERCATOR_MAX_LAT = 85.0511287798066
 
-    def __init__(self, palette: dict[str, str], empty_text: str):
+    def __init__(
+        self,
+        palette: dict[str, str],
+        empty_text: str,
+        cache_namespace: str = "main",
+    ):
         super().__init__()
         self.setMinimumHeight(300)
         self.setMouseTracking(True)
@@ -383,7 +388,7 @@ class WorldMap(QWidget):
         # Qt's disk cache honours the tile server's HTTP cache headers and
         # conditional requests. Only tiles visible in the current viewport
         # are requested; there is no background or bulk tile download.
-        cache_directory = app_data_dir() / "osm-tile-cache"
+        cache_directory = app_data_dir() / "osm-tile-cache" / cache_namespace
         cache_directory.mkdir(parents=True, exist_ok=True)
         self._tile_disk_cache = QNetworkDiskCache(self)
         self._tile_disk_cache.setCacheDirectory(str(cache_directory))
@@ -819,7 +824,11 @@ class WorldMapDialog(QDialog):
         toolbar.addWidget(self.reset_button)
         layout.addLayout(toolbar)
 
-        self.map_widget = WorldMap(palette, source_map.empty_text)
+        self.map_widget = WorldMap(
+            palette,
+            source_map.empty_text,
+            cache_namespace="expanded",
+        )
         self.map_widget.copy_boundaries_from(source_map)
         self.map_widget.set_locations(source_map.locations)
         self.map_widget.setMinimumHeight(470)
