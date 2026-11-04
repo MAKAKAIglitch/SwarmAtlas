@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import statistics
 import time
 
@@ -34,17 +35,27 @@ def measure(label: str, callback, iterations: int) -> tuple[list[float], int]:
 
 
 def rust_read():
-    # Compare the raw native table path, before UI formatting or GeoIP.
-    return native_backend._native.list_tcp_connections(50_000)
+    # Apply the same connected/public filter as the application, without
+    # constructing UI dictionaries, GeoIP results, or saving any rows.
+    rows = native_backend._native.list_tcp_connections(50_000)
+    return [
+        row for row in rows
+        if ipaddress.ip_address(row[0]).is_global
+    ]
 
 
 def psutil_read():
-    # Match the native reader's connected-row semantics (exclude listeners).
-    return [
-        connection
-        for connection in psutil.net_connections(kind="tcp")
-        if connection.raddr
-    ]
+    # Match the Rust path: connected public remote IP endpoints only.
+    result = []
+    for connection in psutil.net_connections(kind="tcp"):
+        if not connection.raddr:
+            continue
+        try:
+            if ipaddress.ip_address(connection.raddr.ip).is_global:
+                result.append(connection)
+        except ValueError:
+            continue
+    return result
 
 
 def main() -> int:
