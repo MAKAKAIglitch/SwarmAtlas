@@ -25,7 +25,8 @@ class AppConfig:
     theme: str = "system"
     language: str = "system"
 
-    def resolved_geoip_databases(self) -> list[str]:
+    def configured_geoip_databases(self) -> list[str]:
+        """Return only user-selected databases, excluding the automatic DB-IP fallback."""
         values = list(self.geoip_databases)
         if not values and self.geoip_database:
             values = [self.geoip_database]
@@ -38,6 +39,13 @@ class AppConfig:
                 seen.add(key)
                 result.append(path)
         return result
+
+    def resolved_geoip_databases(self) -> list[str]:
+        configured = self.configured_geoip_databases()
+        if configured:
+            return configured
+        default_path = app_data_dir() / "geoip" / "dbip-city-lite.mmdb"
+        return [str(default_path)] if default_path.is_file() else []
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -70,7 +78,7 @@ class AppConfig:
             return cls()
 
     def save(self) -> None:
-        self.geoip_databases = self.resolved_geoip_databases()
+        self.geoip_databases = self.configured_geoip_databases()
         self.geoip_database = self.geoip_databases[0] if self.geoip_databases else ""
         path = app_data_dir() / "settings.json"
         temporary = path.with_suffix(".tmp")

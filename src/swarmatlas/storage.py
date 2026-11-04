@@ -307,6 +307,18 @@ class Store:
                 """,
                 (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
             ).fetchall()
+            regions = self._db.execute(
+                """
+                SELECT country, region, COUNT(DISTINCT ip) AS peers
+                FROM destinations
+                WHERE active = 1 AND last_seen >= ?
+                  AND region IS NOT NULL AND region <> ''
+                GROUP BY country, region
+                ORDER BY peers DESC, country, region
+                LIMIT 20
+                """,
+                (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
+            ).fetchall()
             samples = self._db.execute(
                 """
                 SELECT timestamp, upload_bps, download_bps
@@ -321,6 +333,7 @@ class Store:
             **totals,
             "active_endpoints": [dict(row) for row in destinations],
             "countries": [dict(row) for row in countries],
+            "regions": [dict(row) for row in regions],
             "samples": [dict(row) for row in samples],
         }
 

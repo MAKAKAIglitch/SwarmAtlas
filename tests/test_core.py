@@ -93,6 +93,35 @@ def test_same_destination_is_kept_separately_for_each_process(tmp_path: Path) ->
     store.close()
 
 
+
+def test_store_returns_country_and_region_peer_counts(tmp_path: Path) -> None:
+    store = Store(tmp_path / "regions.sqlite3")
+    store.update_destinations(
+        [
+            {"ip": "8.8.8.8", "port": 443, "protocol": "TCP",
+             "country": "United States", "region": "California"},
+            {"ip": "1.1.1.1", "port": 443, "protocol": "TCP",
+             "country": "United States", "region": "California"},
+            {"ip": "9.9.9.9", "port": 443, "protocol": "TCP",
+             "country": "United States", "region": "New York"},
+            {"ip": "203.0.113.10", "port": 443, "protocol": "TCP",
+             "country": "Canada", "region": "Ontario"},
+        ],
+        timestamp=100.0,
+    )
+
+    summary = store.summary("Ethernet", now=100.0)
+    country_counts = {item["country"]: item["peers"] for item in summary["countries"]}
+    region_counts = {
+        (item["country"], item["region"]): item["peers"]
+        for item in summary["regions"]
+    }
+    assert country_counts["United States"] == 3
+    assert region_counts[("United States", "California")] == 2
+    assert region_counts[("United States", "New York")] == 1
+    assert region_counts[("Canada", "Ontario")] == 1
+    store.close()
+
 def test_legacy_destination_schema_migrates_without_losing_history(tmp_path: Path) -> None:
     import sqlite3
 

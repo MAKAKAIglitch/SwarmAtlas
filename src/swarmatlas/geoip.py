@@ -11,7 +11,7 @@ class GeoLocator:
     CACHE_LIMIT = 8192
     WARMUP_ADDRESSES = ("1.1.1.1", "8.8.8.8")
 
-    def __init__(self, database_paths: str | Iterable[str] = ""):
+    def __init__(self, database_paths: str | Iterable[str] = "", language: str = "en"):
         if isinstance(database_paths, str):
             paths = [database_paths] if database_paths else []
         else:
@@ -38,7 +38,8 @@ class GeoLocator:
                 continue
             reader = None
             try:
-                reader = geoip2.database.Reader(str(path))
+                locales = ["ru", "en"] if language == "ru" else ["en", "ru"]
+                reader = geoip2.database.Reader(str(path), locales=locales)
                 database_type = str(reader.metadata().database_type)
                 lowered = database_type.lower()
 

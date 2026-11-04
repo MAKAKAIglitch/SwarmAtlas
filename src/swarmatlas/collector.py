@@ -12,8 +12,11 @@ from PySide6.QtCore import QThread, Signal
 
 from .config import AppConfig, database_path
 from .geoip import GeoLocator
+from .geoip_data import ensure_default_geoip_database
+from .map_data import load_world_boundaries
 from .native import NATIVE_AVAILABLE, backend_status, list_tcp_connections, list_udp_bindings
 from .storage import Store
+from .theme import resolve_language
 
 
 # Conservative polling: the socket/owner tables are scanned less often than byte counters.
@@ -310,13 +313,14 @@ class NetworkWorker(QThread):
     snapshot_ready = Signal(dict)
     status_changed = Signal(str)
     startup_ready = Signal(str)
+    map_data_ready = Signal(object, object)
 
     def __init__(self, config: AppConfig):
         super().__init__()
         self._config = config
         self._lock = threading.Lock()
         self._requested_interface = config.interface
-        self._requested_geoip_databases = tuple(config.resolved_geoip_databases())
+        self._requested_geoip_databases = tuple(config.configured_geoip_databases())
         self._stop_event = threading.Event()
 
     def set_interface(self, name: str) -> None:
@@ -338,16 +342,54 @@ class NetworkWorker(QThread):
         startup_notified = False
         try:
             store = Store(database_path())
-            locator = GeoLocator(self._requested_geoip_databases)
             interface = self._resolve_interface(self._requested_interface)
-            status = locator.status
-            self.status_changed.emit(status)
+
+            # Show the desktop immediately. First-run data downloads continue
+            # on this worker and never block the Qt GUI thread.
+            self.startup_ready.emit("Preparing local network monitor")
+            startup_notified = True
+
+            with self._lock:
+                configured_geoip = self._requested_geoip_databases
+
+            if configured_geoip:
+                effective_geoip = configured_geoip
+            else:
+                self.status_changed.emit("Downloading or checking the local DB-IP City Lite database…")
+                try:
+                    database = ensure_default_geoip_database(
+                        progress=lambda value: self.status_changed.emit(
+                            f"Downloading DB-IP City Lite database: {value}%"
+                        )
+                    )
+                    effective_geoip = (str(database),)
+                except Exception as exc:
+                    effective_geoip = ()
+                    self.status_changed.emit(
+                        f"Could not prepare the default DB-IP database: {type(exc).__name__}: {exc}"
+                    )
+
+            locator = GeoLocator(
+                effective_geoip,
+                language=resolve_language(self._config.language),
+            )
+            loaded_geoip = effective_geoip
+            self.status_changed.emit(locator.status)
             if not interface:
                 self.status_changed.emit("No active network interface found")
 
-            # MMDB readers are opened on this worker; UI startup stays responsive.
-            self.startup_ready.emit(status)
-            startup_notified = True
+            # Download and parse Natural Earth polygons off the GUI thread.
+            # Once cached, the map works offline on every later launch.
+            try:
+                countries, regions = load_world_boundaries(
+                    progress=lambda message: self.status_changed.emit(message)
+                )
+                self.map_data_ready.emit(countries, regions)
+                self.status_changed.emit("Country and region map ready")
+            except Exception as exc:
+                self.status_changed.emit(
+                    f"Offline country/region map unavailable: {type(exc).__name__}: {exc}"
+                )
 
             previous_time = time.monotonic()
             last_endpoint_scan = 0.0
@@ -355,7 +397,6 @@ class NetworkWorker(QThread):
             upload_rate = 0.0
             download_rate = 0.0
             connection_status = "Waiting for first network sample"
-            loaded_geoip = self._requested_geoip_databases
 
             while not self._stop_event.is_set():
                 now_mono = time.monotonic()
@@ -365,11 +406,24 @@ class NetworkWorker(QThread):
                     requested = self._requested_interface
                     requested_geoip = self._requested_geoip_databases
 
-                if requested_geoip != loaded_geoip:
+                # An empty selection means "use the automatically managed local
+                # DB-IP database", not "turn geolocation off".
+                if requested_geoip:
+                    effective_geoip = requested_geoip
+                else:
+                    from .geoip_data import default_geoip_database_path
+
+                    default_path = default_geoip_database_path()
+                    effective_geoip = (str(default_path),) if default_path.is_file() else ()
+
+                if effective_geoip != loaded_geoip:
                     if locator is not None:
                         locator.close()
-                    locator = GeoLocator(requested_geoip)
-                    loaded_geoip = requested_geoip
+                    locator = GeoLocator(
+                        effective_geoip,
+                        language=resolve_language(self._config.language),
+                    )
+                    loaded_geoip = effective_geoip
                     self.status_changed.emit(locator.status)
 
                 try:
