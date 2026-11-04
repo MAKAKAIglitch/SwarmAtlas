@@ -11,6 +11,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -131,6 +132,7 @@ class RemoteGeoLocator:
         self.api_key = api_key.strip()
         self.status = self._initial_status()
         self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._failed_until: dict[str, float] = {}
         self._pending: set[str] = set()
         self._queue: queue.Queue[str] = queue.Queue(maxsize=MAX_PENDING_LOOKUPS)
         self._lock = threading.RLock()
@@ -269,6 +271,11 @@ class RemoteGeoLocator:
             if cached is not None:
                 self._cache.move_to_end(ip)
                 return dict(cached)
+            retry_at = self._failed_until.get(ip)
+            if retry_at is not None:
+                if retry_at > time.monotonic():
+                    return {}
+                self._failed_until.pop(ip, None)
             if (
                 ip not in self._pending
                 and self._thread is not None
@@ -374,16 +381,33 @@ class RemoteGeoLocator:
                 try:
                     result = self._fetch(ip)
                 except Exception as exc:
+                    backoff = 300.0
+                    if isinstance(exc, HTTPError) and exc.code == 429:
+                        try:
+                            backoff = max(60.0, min(3600.0, float(exc.headers.get("Retry-After", "300"))))
+                        except (TypeError, ValueError):
+                            backoff = 300.0
+                    with self._lock:
+                        self._failed_until[ip] = time.monotonic() + backoff
+                        while len(self._failed_until) > CACHE_LIMIT:
+                            oldest = next(iter(self._failed_until))
+                            self._failed_until.pop(oldest, None)
                     self.status = f"{PROVIDER_NAMES[self.provider]} lookup failed: {type(exc).__name__}: {exc}"
                     _LOGGER.debug("Remote GeoIP lookup failed for a destination address: %s", exc)
                     continue
                 if result:
                     with self._lock:
+                        self._failed_until.pop(ip, None)
                         self._cache[ip] = result
                         self._cache.move_to_end(ip)
                         while len(self._cache) > CACHE_LIMIT:
                             self._cache.popitem(last=False)
                     self.status = f"{PROVIDER_NAMES[self.provider]} connected · cached {len(self._cache)} addresses"
+                else:
+                    # Negative-cache valid but currently unlocatable records as
+                    # well, otherwise each 15-second socket scan repeats them.
+                    with self._lock:
+                        self._failed_until[ip] = time.monotonic() + 3600.0
             finally:
                 with self._lock:
                     self._pending.discard(ip)
@@ -396,3 +420,4 @@ class RemoteGeoLocator:
         with self._lock:
             self._pending.clear()
             self._cache.clear()
+            self._failed_until.clear()
