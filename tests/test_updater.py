@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from update_project import refresh_native_extension, safe_members, should_skip
+from update_project import (
+    NATIVE_WHEEL_FILENAME,
+    refresh_native_extension,
+    safe_members,
+    should_skip,
+    verify_native_wheel,
+)
 
 
 def test_updater_preserves_virtualenv_and_local_databases() -> None:
@@ -78,9 +84,44 @@ def test_updater_does_not_rebuild_when_rust_toolchain_is_missing(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr("update_project.shutil.which", lambda _name: None)
+    installs: list[Path] = []
+
+    def fake_install(root: Path, python_executable: Path) -> bool:
+        installs.append(python_executable)
+        return True
+
+    monkeypatch.setattr("update_project.install_prebuilt_native", fake_install)
 
     assert refresh_native_extension(tmp_path) is True
     assert len(calls) == 1
+    assert installs == [python]
+
+
+def test_native_wheel_sha256_manifest_is_verified(tmp_path: Path) -> None:
+    import hashlib
+
+    wheel = tmp_path / NATIVE_WHEEL_FILENAME
+    payload = b"fake wheel payload for checksum unit test"
+    wheel.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+
+    verify_native_wheel(wheel, f"{digest}  {NATIVE_WHEEL_FILENAME}")
+
+
+def test_native_wheel_rejects_checksum_mismatch(tmp_path: Path) -> None:
+    wheel = tmp_path / NATIVE_WHEEL_FILENAME
+    wheel.write_bytes(b"actual contents")
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        verify_native_wheel(wheel, f"{'0' * 64}  {NATIVE_WHEEL_FILENAME}")
+
+
+def test_native_wheel_rejects_unexpected_asset_name(tmp_path: Path) -> None:
+    wheel = tmp_path / NATIVE_WHEEL_FILENAME
+    wheel.write_bytes(b"contents")
+
+    with pytest.raises(ValueError, match="unexpected native wheel"):
+        verify_native_wheel(wheel, f"{'0' * 64}  other.whl")
 
 
 def test_updater_rebuilds_installed_native_extension_when_toolchain_exists(
