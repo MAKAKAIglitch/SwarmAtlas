@@ -69,8 +69,16 @@ def _normalize(provider: str, data: dict[str, Any]) -> dict[str, Any]:
         asn = asn_value if isinstance(asn_value, dict) else {}
         company_value = data.get("company")
         company = company_value if isinstance(company_value, dict) else {}
+        raw_country = data.get("country")
+        country_code = data.get("country_code")
+        if not country_code and isinstance(raw_country, str) and len(raw_country.strip()) == 2:
+            country_code = raw_country.strip().upper()
+        country_name = data.get("country_name")
+        if not country_name and isinstance(raw_country, str) and len(raw_country.strip()) != 2:
+            country_name = raw_country
         organization = (
             asn.get("name")
+            or data.get("org")
             or data.get("name")
             or company.get("name")
             or (company_value if isinstance(company_value, str) else None)
@@ -78,8 +86,8 @@ def _normalize(provider: str, data: dict[str, Any]) -> dict[str, Any]:
             or data.get("organization")
         )
         result.update({
-            "country": data.get("country_name"),
-            "country_code": data.get("country_code"),
+            "country": country_name or country_code,
+            "country_code": country_code,
             "region": data.get("region"),
             "city": data.get("city"),
             "latitude": _number(data.get("latitude")),
@@ -332,7 +340,7 @@ class RemoteGeoLocator:
             fields = "status,message,country,countryCode,regionName,city,lat,lon,isp,org,as"
             return f"http://ip-api.com/json/{encoded_ip}?fields={fields}"
         if self.provider == "ipdata":
-            base = f"https://api.ipdata.co/{encoded_ip}"
+            base = f"https://ipdata.free/{encoded_ip}"
             return base + ("?" + urlencode({"api-key": self.api_key}) if self.api_key else "")
         if self.provider == "ipapi-is":
             return "https://api.ipapi.is/"
