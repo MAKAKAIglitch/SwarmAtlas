@@ -425,6 +425,7 @@ class WorldMap(QWidget):
         self._drag_origin = QPointF(0.0, 0.0)
         self._dragged = False
         self._hovered_index: int | None = None
+        self._base_layer_cache: QPixmap | None = None
 
         # Qt's disk cache honours the tile server's HTTP cache headers and
         # conditional requests. Only tiles visible in the current viewport
@@ -441,9 +442,457 @@ class WorldMap(QWidget):
         self._tile_retry_after: dict[tuple[int, int, int], float] = {}
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
+from __future__ import annotations
+
+from collections import OrderedDict
+from pathlib import Path
+import math
+import shutil
+import sqlite3
+import time
+from typing import Any
+
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication, QPixmap
+from PySide6.QtWidgets import (
+    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
+    QTableWidgetItem, QToolTip, QVBoxLayout, QWidget, QLineEdit,
+)
+from PySide6.QtNetwork import (
+    QNetworkAccessManager,
+    QNetworkDiskCache,
+    QNetworkReply,
+    QNetworkRequest,
+)
+
+from .collector import NetworkWorker, available_interfaces
+from .config import AppConfig, app_data_dir
+from .i18n import tr, translate_status
+from .map_geometry import build_boundary_paths
+from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
+from .utils import format_bytes, format_rate
+
+
+def card() -> QFrame:
+    frame = QFrame()
+    frame.setObjectName("card")
+    return frame
+
+
+def make_label(
+    text: str,
+    size: int = 10,
+    color: str = "#17212B",
+    weight: int = 400,
+) -> QLabel:
+    label = QLabel(text)
+    font = label.font()
+    font.setPointSize(size)
+    font.setWeight(QFont.Weight(weight))
+    label.setFont(font)
+    label.setStyleSheet(f"color: {color}; background: transparent;")
+    return label
+
+
+def update_table(table: QTableWidget, rows: list[list[str]]) -> None:
+    """Update table cells only when displayed values actually changed."""
+    if table.rowCount() == len(rows):
+        unchanged = True
+        for row_index, row in enumerate(rows):
+            if len(row) != table.columnCount():
+                unchanged = False
+                break
+            for column_index, value in enumerate(row):
+                item = table.item(row_index, column_index)
+                if item is None or item.text() != value:
+                    unchanged = False
+                    break
+            if not unchanged:
+                break
+        if unchanged:
+            return
+
+    table.setUpdatesEnabled(False)
+    try:
+        table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            for column_index, value in enumerate(row):
+                item = table.item(row_index, column_index)
+                if item is None:
+                    table.setItem(row_index, column_index, QTableWidgetItem(value))
+                elif item.text() != value:
+                    item.setText(value)
+    finally:
+        table.setUpdatesEnabled(True)
+        table.viewport().update()
+
+
+class MetricCard(QFrame):
+    def __init__(self, title: str, accent: str, hint: str, palette: dict[str, str]):
+        super().__init__()
+        self.setObjectName("card")
+        self.setMinimumHeight(112)
+        self.accent = accent
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 15, 18, 14)
+        layout.setSpacing(7)
+        self.title = make_label(title, 10, palette["muted"], 600)
+        self.value = make_label("—", 23, accent, 600)
+        self.hint = make_label(hint, 9, palette["muted"])
+        self._opacity = QGraphicsOpacityEffect(self.value)
+        self._opacity.setOpacity(1.0)
+        self.value.setGraphicsEffect(self._opacity)
+        self._fade = QPropertyAnimation(self._opacity, b"opacity", self)
+        self._fade.setDuration(170)
+        self._fade.setStartValue(0.76)
+        self._fade.setEndValue(1.0)
+        self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        layout.addWidget(self.title)
+        layout.addWidget(self.value)
+        layout.addWidget(self.hint)
+
+    def set_value(self, value: str, hint: str | None = None) -> None:
+        changed = self.value.text() != value
+        if changed:
+            self.value.setText(value)
+            self._fade.stop()
+            self._opacity.setOpacity(0.76)
+            self._fade.start()
+        if hint is not None and self.hint.text() != hint:
+            self.hint.setText(hint)
+
+
+class GeoIPDatabaseDialog(QDialog):
+    def __init__(self, paths: list[str], language: str, palette: dict[str, str], parent=None):
+        super().__init__(parent)
+        self.language = language
+        self.palette = palette
+        self.setWindowTitle(tr("geoip_settings", language))
+        self.setMinimumSize(560, 440)
+
+        layout = QVBoxLayout(self)
+        intro = make_label(tr("geoip_dialog_intro", language), 10, palette["text"])
+        intro.setWordWrap(True)
+        note = make_label(tr("geoip_privacy_note", language), 9, palette["muted"])
+        note.setWordWrap(True)
+        self.download_label = QLabel(tr("geoip_download_sources", language))
+        self.download_label.setTextFormat(Qt.TextFormat.RichText)
+        self.download_label.setOpenExternalLinks(True)
+        self.download_label.setWordWrap(True)
+        self.download_label.setStyleSheet(
+            f"color: {palette['text']}; background: transparent;"
+        )
+        self.download_instructions = make_label(
+            tr("geoip_download_instructions", language), 9, palette["muted"]
+        )
+        self.download_instructions.setWordWrap(True)
+        layout.addWidget(intro)
+        layout.addWidget(note)
+        layout.addWidget(self.download_label)
+        layout.addWidget(self.download_instructions)
+
+        self.empty_label = make_label(tr("geoip_empty", language), 9, palette["muted"])
+        layout.addWidget(self.empty_label)
+        self.items = QListWidget()
+        self.items.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        layout.addWidget(self.items, 1)
+        for path in paths:
+            self._add_path(path)
+        self._update_empty_state()
+        self.items.model().rowsInserted.connect(self._update_empty_state)
+        self.items.model().rowsRemoved.connect(self._update_empty_state)
+
+        actions = QHBoxLayout()
+        self.add_button = QPushButton(tr("geoip_add", language))
+        self.add_button.setObjectName("quiet")
+        self.remove_button = QPushButton(tr("geoip_remove", language))
+        self.remove_button.setObjectName("quiet")
+        self.add_button.clicked.connect(self.add_databases)
+        self.remove_button.clicked.connect(self.remove_selected)
+        actions.addWidget(self.add_button)
+        actions.addWidget(self.remove_button)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.setStyleSheet(
+            f"QDialog {{ background: {palette['bg']}; color: {palette['text']}; }}"
+            f"QListWidget {{ background: {palette['surface']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 8px; padding: 6px; }}"
+            f"QPushButton {{ background: {palette['surface_alt']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 7px; padding: 7px 11px; }}"
+            f"QPushButton:hover {{ border-color: {palette['accent']}; }}"
+        )
+
+    def _add_path(self, path: str) -> None:
+        normalized = str(Path(path).expanduser())
+        key = normalized.casefold()
+        if any(
+            str(self.items.item(i).data(Qt.ItemDataRole.UserRole)).casefold() == key
+            for i in range(self.items.count())
+        ):
+            return
+        item = QListWidgetItem(f"{Path(normalized).name}   ·   {normalized}")
+        item.setData(Qt.ItemDataRole.UserRole, normalized)
+        item.setToolTip(normalized)
+        self.items.addItem(item)
+        self._update_empty_state()
+
+    def _update_empty_state(self, *_args: Any) -> None:
+        self.empty_label.setVisible(self.items.count() == 0)
+
+    def add_databases(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            tr("geoip_title", self.language),
+            "",
+            tr("geoip_filter", self.language),
+        )
+        for path in paths:
+            self._add_path(path)
+
+    def remove_selected(self) -> None:
+        for item in self.items.selectedItems():
+            self.items.takeItem(self.items.row(item))
+        self._update_empty_state()
+
+    def selected_paths(self) -> list[str]:
+        return [
+            str(self.items.item(index).data(Qt.ItemDataRole.UserRole))
+            for index in range(self.items.count())
+        ]
+
+
+class GeoIPProviderDialog(QDialog):
+    PROVIDERS = (
+        ("dbip", "provider_dbip"),
+        ("ip-api", "provider_ip_api"),
+        ("ipdata", "provider_ipdata"),
+        ("ipapi-is", "provider_ipapi_is"),
+        ("ipinfo-lite", "provider_ipinfo"),
+        ("ip2location", "provider_ip2location"),
+        ("2ip", "provider_2ip"),
+    )
+
+    def __init__(
+        self,
+        provider: str,
+        api_keys: dict[str, str],
+        language: str,
+        palette: dict[str, str],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.language = language
+        self.palette = palette
+        self.api_keys = dict(api_keys)
+        self._active_provider = provider
+        self.setWindowTitle(tr("geoip_settings", language))
+        self.setMinimumWidth(560)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        intro = make_label(tr("geoip_provider_intro", language), 10, palette["text"])
+        intro.setWordWrap(True)
+        privacy = make_label(tr("geoip_provider_privacy", language), 9, palette["muted"])
+        privacy.setWordWrap(True)
+        layout.addWidget(intro)
+        layout.addWidget(privacy)
+
+        self.provider_combo = QComboBox()
+        for provider_id, label_key in self.PROVIDERS:
+            self.provider_combo.addItem(tr(label_key, language), provider_id)
+        selected = self.provider_combo.findData(provider)
+        self.provider_combo.setCurrentIndex(max(0, selected))
+        layout.addWidget(self.provider_combo)
+
+        self.key_label = make_label(tr("geoip_api_key", language), 9, palette["muted"], 600)
+        layout.addWidget(self.key_label)
+        self.api_key_input = QLineEdit(self.api_keys.get(provider, ""))
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_input.setPlaceholderText(tr("geoip_api_key_placeholder", language))
+        layout.addWidget(self.api_key_input)
+
+        self.info_label = make_label("", 9, palette["muted"])
+        self.info_label.setWordWrap(True)
+        self.info_label.setTextFormat(Qt.TextFormat.RichText)
+        self.info_label.setOpenExternalLinks(True)
+        layout.addWidget(self.info_label)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.provider_combo.currentIndexChanged.connect(self._sync_provider)
+        self._sync_provider()
+
+        self.setStyleSheet(
+            f"QDialog {{ background: {palette['bg']}; color: {palette['text']}; }}"
+            f"QComboBox, QLineEdit {{ background: {palette['surface']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 7px; padding: 7px; }}"
+            f"QPushButton {{ background: {palette['surface_alt']}; color: {palette['text']}; "
+            f"border: 1px solid {palette['line']}; border-radius: 7px; padding: 7px 11px; }}"
+        )
+
+    def _sync_provider(self, *_args: Any) -> None:
+        provider = str(self.provider_combo.currentData() or "dbip")
+        if provider != self._active_provider:
+            self.api_keys[self._active_provider] = self.api_key_input.text().strip()
+            self._active_provider = provider
+            self.api_key_input.setText(self.api_keys.get(provider, ""))
+        accepts_token = provider in {"ipdata", "ipapi-is", "ipinfo-lite", "ip2location", "2ip"}
+        self.key_label.setVisible(accepts_token)
+        self.api_key_input.setVisible(accepts_token)
+        self.api_key_input.setEnabled(accepts_token)
+        if provider == "dbip":
+            message_key = "provider_note_dbip"
+        else:
+            message_key = f"provider_note_{provider.replace('-', '_')}"
+        self.info_label.setText(tr(message_key, self.language))
+
+    def selected_provider(self) -> str:
+        return str(self.provider_combo.currentData() or "dbip")
+
+    def selected_api_keys(self) -> dict[str, str]:
+        values = dict(self.api_keys)
+        current_provider = self.selected_provider()
+        current_key = self.api_key_input.text().strip()
+        if current_key:
+            values[current_provider] = current_key
+        else:
+            values.pop(current_provider, None)
+        return values
+
+
+class TrafficChart(QWidget):
+    def __init__(self, palette: dict[str, str], empty_text: str):
+        super().__init__()
+        self.setMinimumHeight(190)
+        self.palette_colors = palette
+        self.empty_text = empty_text
+        self.upload: list[float] = []
+        self.download: list[float] = []
+
     def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
         self.palette_colors = palette
         self.empty_text = empty_text
+        self.update()
+
+    def set_samples(self, samples: list[dict[str, Any]]) -> None:
+        upload = [float(item["upload_bps"]) for item in samples]
+        download = [float(item["download_bps"]) for item in samples]
+        if upload == self.upload and download == self.download:
+            return
+        self.upload = upload
+        self.download = download
+        self.update()
+
+    def paintEvent(self, event: Any) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect().adjusted(10, 12, -10, -18)
+        colors = self.palette_colors
+        painter.setPen(QPen(QColor(colors["grid"]), 1))
+        for row in range(4):
+            y = rect.top() + row * rect.height() / 3
+            painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
+
+        peak = max(self.upload + self.download, default=0.0)
+        if peak <= 0 or len(self.upload) < 2:
+            painter.setPen(QColor(colors["muted"]))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.empty_text)
+            return
+
+        def draw_series(series: list[float], color: str) -> None:
+            if len(series) < 2:
+                return
+            path = QPainterPath()
+            for index, value in enumerate(series):
+                x = rect.left() + index * rect.width() / max(1, len(series) - 1)
+                y = rect.bottom() - (value / peak) * rect.height()
+                point = QPointF(x, y)
+                if index == 0:
+                    path.moveTo(point)
+                else:
+                    path.lineTo(point)
+            painter.setPen(QPen(QColor(color), 2))
+            painter.drawPath(path)
+
+        draw_series(self.download, colors["download"])
+        draw_series(self.upload, colors["accent"])
+
+
+class WorldMap(QWidget):
+    """OSM-backed world map, limited to country, region and city-scale detail."""
+
+    location_selected = Signal(dict)
+    TILE_MIN_ZOOM = 2
+    TILE_MAX_ZOOM = 8
+    TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    TILE_USER_AGENT = b"SwarmAtlas/0.2"
+    MAX_MEMORY_TILES = 160
+    MAX_PENDING_TILES = 1
+    MAX_FAILED_TILE_ENTRIES = 512
+    MAX_TILE_RESPONSE_BYTES = 1024 * 1024
+    MAX_DISK_CACHE_BYTES = 128 * 1024 * 1024
+    MERCATOR_MAX_LAT = 85.0511287798066
+
+    def __init__(
+        self,
+        palette: dict[str, str],
+        empty_text: str,
+        cache_namespace: str = "main",
+    ):
+        super().__init__()
+        self.setMinimumHeight(300)
+        self.setMouseTracking(True)
+        self.palette_colors = palette
+        self.empty_text = empty_text
+        self.locations: list[dict[str, Any]] = []
+        self._location_signature: tuple[tuple[Any, ...], ...] | None = None
+        self._location_world_points: list[QPointF] = []
+        self.country_path = QPainterPath()
+        self.region_path = QPainterPath()
+        self._has_boundaries = False
+        self._zoom = 1.0
+        self._pan = QPointF(0.0, 0.0)
+        self._drag_start: QPointF | None = None
+        self._drag_origin = QPointF(0.0, 0.0)
+        self._dragged = False
+        self._hovered_index: int | None = None
+        self._base_layer_cache: QPixmap | None = None
+
+        # Qt's disk cache honours the tile server's HTTP cache headers and
+        # conditional requests. Only tiles visible in the current viewport
+        # are requested; there is no background or bulk tile download.
+        cache_directory = app_data_dir() / "osm-tile-cache" / cache_namespace
+        cache_directory.mkdir(parents=True, exist_ok=True)
+        self._tile_disk_cache = QNetworkDiskCache(self)
+        self._tile_disk_cache.setCacheDirectory(str(cache_directory))
+        self._tile_disk_cache.setMaximumCacheSize(self.MAX_DISK_CACHE_BYTES)
+        self._tile_manager = QNetworkAccessManager(self)
+        self._tile_manager.setCache(self._tile_disk_cache)
+        self._tile_pixmaps: OrderedDict[tuple[int, int, int], QPixmap] = OrderedDict()
+        self._tile_pending: set[tuple[int, int, int]] = set()
+        self._tile_retry_after: dict[tuple[int, int, int], float] = {}
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def _invalidate_base_layer(self) -> None:
+        self._base_layer_cache = None
+
+    def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
+        self.palette_colors = palette
+        self.empty_text = empty_text
+        self._invalidate_base_layer()
         self.update()
 
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
@@ -508,6 +957,7 @@ class WorldMap(QWidget):
         self.country_path = QPainterPath(countries)
         self.region_path = QPainterPath(regions)
         self._has_boundaries = not self.country_path.isEmpty()
+        self._invalidate_base_layer()
         self.update()
 
     def copy_boundaries_from(self, other: "WorldMap") -> None:
@@ -555,6 +1005,7 @@ class WorldMap(QWidget):
             position.x() - center.x() - anchored_x * new_zoom,
             position.y() - center.y() - anchored_y * new_zoom,
         )
+        self._invalidate_base_layer()
         self.update()
 
     def zoom_in(self) -> None:
@@ -566,6 +1017,7 @@ class WorldMap(QWidget):
     def reset_view(self) -> None:
         self._zoom = 1.0
         self._pan = QPointF(0.0, 0.0)
+        self._invalidate_base_layer()
         self.update()
 
     def _request_tile(self, zoom: int, x: int, y: int) -> None:
@@ -611,6 +1063,7 @@ class WorldMap(QWidget):
                     while len(self._tile_pixmaps) > self.MAX_MEMORY_TILES:
                         self._tile_pixmaps.popitem(last=False)
                     self._tile_retry_after.pop(key, None)
+                    self._invalidate_base_layer()
                 else:
                     self._tile_retry_after[key] = time.monotonic() + 300.0
                     if len(self._tile_retry_after) > self.MAX_FAILED_TILE_ENTRIES:
@@ -753,16 +1206,27 @@ class WorldMap(QWidget):
 
     def paintEvent(self, event: Any) -> None:
         del event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        area = self.rect().adjusted(8, 6, -8, -6)
         colors = self.palette_colors
-        painter.fillRect(area, QColor(colors["surface_alt"]))
-
+        area = self.rect().adjusted(8, 6, -8, -6)
         map_rect = self._map_rect()
-        self._draw_fallback_land(painter, map_rect)
-        self._draw_osm_tiles(painter, area, map_rect)
-        self._draw_administrative_boundaries(painter, map_rect)
+
+        # The world background, OSM tiles and thousands of country/region
+        # segments are stable while the pointer moves. Rasterize them once and
+        # redraw only endpoint markers/tooltips until the view actually changes.
+        if self._base_layer_cache is None or self._base_layer_cache.size() != self.size():
+            cache = QPixmap(self.size())
+            cache.fill(QColor(colors["surface_alt"]))
+            base_painter = QPainter(cache)
+            base_painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            base_painter.fillRect(area, QColor(colors["surface_alt"]))
+            self._draw_fallback_land(base_painter, map_rect)
+            self._draw_osm_tiles(base_painter, area, map_rect)
+            self._draw_administrative_boundaries(base_painter, map_rect)
+            base_painter.end()
+            self._base_layer_cache = cache
+
+        painter = QPainter(self)
+        painter.drawPixmap(0, 0, self._base_layer_cache)
 
         painter.save()
         painter.setClipRect(map_rect)
@@ -818,6 +1282,7 @@ class WorldMap(QWidget):
                     self._drag_origin.x() + delta.x(),
                     self._drag_origin.y() + delta.y(),
                 )
+                self._invalidate_base_layer()
                 self.update()
             event.accept()
             return
