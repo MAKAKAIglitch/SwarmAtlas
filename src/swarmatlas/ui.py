@@ -1378,7 +1378,9 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event: Any) -> None:
         super().showEvent(event)
-        self.worker.set_power_saver_mode(self.isMinimized())
+        worker = getattr(self, "worker", None)
+        if worker is not None:
+            worker.set_power_saver_mode(self.isMinimized())
         if not self._mica_attempted:
             self._mica_attempted = True
             self._mica_applied = apply_windows_mica(
@@ -1389,8 +1391,9 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)
-        if event.type() == QEvent.Type.WindowStateChange:
-            self.worker.set_power_saver_mode(self.isMinimized())
+        worker = getattr(self, "worker", None)
+        if worker is not None and event.type() == QEvent.Type.WindowStateChange:
+            worker.set_power_saver_mode(self.isMinimized())
 
     def _on_system_theme_changed(self, *_args: Any) -> None:
         if self.config.theme == "system":
