@@ -18,9 +18,9 @@ struct UdpRowV6 {
     owning_pid: u32,
 }
 
-pub(super) type UdpBinding = (String, u16, u32);
+pub(crate) type UdpBinding = (String, u16, u32);
 
-pub(super) fn list_udp_bindings(limit: usize) -> Result<Vec<UdpBinding>, String> {
+pub(crate) fn list_udp_bindings(limit: usize) -> Result<Vec<UdpBinding>, String> {
     let limit = limit.min(100_000);
     if limit == 0 {
         return Ok(Vec::new());
