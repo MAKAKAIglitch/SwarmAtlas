@@ -118,7 +118,7 @@ def _install_prebuilt_native_core(
             str(venv_python), "-c",
             "import _swarmatlas_native as n; "
             "print('Existing Rust core:', n.__version__); "
-            NATIVE_CAPABILITY_ASSERTION,
+            + NATIVE_CAPABILITY_ASSERTION,
         ],
         log,
         root,
@@ -197,7 +197,7 @@ def _install_prebuilt_native_core(
                     "import _swarmatlas_native as n; "
                     "print('Rust core:', n.__version__); "
                     "print('Features:', ', '.join(n.capabilities())); "
-                    NATIVE_CAPABILITY_ASSERTION,
+                    + NATIVE_CAPABILITY_ASSERTION,
                 ],
                 log,
                 root,
