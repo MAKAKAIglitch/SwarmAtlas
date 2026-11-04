@@ -14,6 +14,12 @@ from .geoip import GeoLocator
 from .storage import Store
 
 
+# Conservative polling: socket enumeration is less frequent than byte counters.
+COUNTER_SAMPLE_INTERVAL_SEC = 1.0
+ENDPOINT_SCAN_INTERVAL_SEC = 15.0
+HISTORY_SAMPLE_INTERVAL_SEC = 10.0
+MAX_TRACKED_ENDPOINTS = 2000
+
 VIRTUAL_MARKERS = (
     "loopback", "virtual", "vmware", "virtualbox", "hyper-v", "vethernet",
     "wintun", "wireguard", "zerotier", "tailscale", "tap-", "docker", "wsl",
@@ -21,11 +27,13 @@ VIRTUAL_MARKERS = (
 
 
 def available_interfaces() -> list[str]:
+    """Read interface state without changing adapter settings."""
     stats = psutil.net_if_stats()
     return sorted(name for name, item in stats.items() if item.isup)
 
 
 def choose_default_interface() -> str:
+    """Choose an active interface using read-only OS counters."""
     stats = psutil.net_if_stats()
     counters = psutil.net_io_counters(pernic=True) or {}
     candidates: list[str] = []
@@ -53,7 +61,8 @@ def choose_default_interface() -> str:
     )
 
 
-def collect_public_endpoints() -> list[dict[str, Any]]:
+def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[str, Any]]:
+    """Read the OS socket table; do not capture packets or open sockets."""
     found: dict[tuple[str, int, str], dict[str, Any]] = {}
     for connection in psutil.net_connections(kind="inet"):
         remote = connection.raddr
@@ -71,6 +80,8 @@ def collect_public_endpoints() -> list[dict[str, Any]]:
         protocol = "UDP" if connection.type == socket.SOCK_DGRAM else "TCP"
         key = (ip, port, protocol)
         found[key] = {"ip": ip, "port": port, "protocol": protocol}
+        if len(found) >= max(1, limit):
+            break
     return list(found.values())
 
 
@@ -89,39 +100,50 @@ class NetworkWorker(QThread):
         with self._lock:
             self._requested_interface = name
 
-    def stop(self) -> None:
+    def stop(self, timeout_ms: int = 10000) -> bool:
+        """Request graceful shutdown; never forcibly terminate the worker."""
         self._stop_event.set()
-        self.wait(4000)
+        return self.wait(timeout_ms)
 
     def run(self) -> None:
-        store = Store(database_path())
-        locator = GeoLocator(self._config.geoip_database)
-        interface = self._resolve_interface(self._requested_interface)
-        self.status_changed.emit(locator.status)
-        if not interface:
-            self.status_changed.emit("No active network interface found")
-
-        previous_time = time.monotonic()
-        last_endpoint_scan = 0.0
-        last_history_sample = 0.0
-        upload_rate = 0.0
-        download_rate = 0.0
-        connection_status = "Waiting for first network sample"
-
+        store: Store | None = None
+        locator: GeoLocator | None = None
         try:
+            store = Store(database_path())
+            locator = GeoLocator(self._config.geoip_database)
+            interface = self._resolve_interface(self._requested_interface)
+            self.status_changed.emit(locator.status)
+            if not interface:
+                self.status_changed.emit("No active network interface found")
+
+            previous_time = time.monotonic()
+            last_endpoint_scan = 0.0
+            last_history_sample = 0.0
+            upload_rate = 0.0
+            download_rate = 0.0
+            connection_status = "Waiting for first network sample"
+
             while not self._stop_event.is_set():
                 now_mono = time.monotonic()
                 now_wall = time.time()
 
                 with self._lock:
                     requested = self._requested_interface
-                resolved = self._resolve_interface(requested)
+                try:
+                    resolved = self._resolve_interface(requested)
+                except psutil.Error:
+                    resolved = interface
                 if resolved != interface:
                     interface = resolved
                     previous_time = now_mono
 
-                counters = psutil.net_io_counters(pernic=True) or {}
-                current = counters.get(interface) if interface else None
+                try:
+                    counters = psutil.net_io_counters(pernic=True) or {}
+                    current = counters.get(interface) if interface else None
+                except psutil.Error as exc:
+                    current = None
+                    connection_status = f"Interface counters unavailable: {exc}"
+
                 elapsed = max(0.001, now_mono - previous_time)
                 previous_time = now_mono
 
@@ -135,20 +157,22 @@ class NetworkWorker(QThread):
                     upload_rate = 0.0
                     download_rate = 0.0
 
-                if now_mono - last_endpoint_scan >= 5.0:
+                if now_mono - last_endpoint_scan >= ENDPOINT_SCAN_INTERVAL_SEC:
                     try:
                         endpoints = collect_public_endpoints()
                         for endpoint in endpoints:
                             endpoint.update(locator.lookup(endpoint["ip"]))
                         store.update_destinations(endpoints, now_wall)
-                        connection_status = f"{len(endpoints)} public endpoints observed"
+                        connection_status = f"{len(endpoints)} public endpoints observed (scan every 15 s)"
                     except psutil.AccessDenied:
-                        connection_status = "Windows restricted the socket table; run elevated for fuller endpoint visibility"
+                        connection_status = "Socket table access restricted; interface totals still work"
+                    except psutil.Error as exc:
+                        connection_status = f"Socket table unavailable: {exc}"
                     except Exception as exc:
                         connection_status = f"Endpoint scan unavailable: {exc}"
                     last_endpoint_scan = now_mono
 
-                if now_mono - last_history_sample >= 10.0:
+                if now_mono - last_history_sample >= HISTORY_SAMPLE_INTERVAL_SEC:
                     store.add_sample(now_wall, upload_rate, download_rate)
                     last_history_sample = now_mono
 
@@ -160,13 +184,25 @@ class NetworkWorker(QThread):
                         "download_bps": download_rate,
                         "connection_status": connection_status,
                         "geoip_status": locator.status,
+                        "read_only": True,
                     })
                     self.snapshot_ready.emit(payload)
 
-                self._stop_event.wait(1.0)
+                self._stop_event.wait(COUNTER_SAMPLE_INTERVAL_SEC)
+
+        except Exception as exc:
+            self.status_changed.emit(f"Monitor stopped safely: {type(exc).__name__}: {exc}")
         finally:
-            locator.close()
-            store.close()
+            if locator is not None:
+                try:
+                    locator.close()
+                except Exception:
+                    pass
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    pass
 
     @staticmethod
     def _resolve_interface(requested: str) -> str:

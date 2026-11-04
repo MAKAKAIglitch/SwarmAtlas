@@ -7,8 +7,11 @@ from pathlib import Path
 from typing import Any
 
 
+DESTINATION_RETENTION_SEC = 30 * 24 * 60 * 60
+
+
 class Store:
-    """Small SQLite store. One instance is owned by the collector thread."""
+    """Small local SQLite store. One instance is owned by the collector thread."""
 
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +126,10 @@ class Store:
     def update_destinations(self, endpoints: list[dict[str, Any]], timestamp: float) -> None:
         with self._lock, self._db:
             self._db.execute("UPDATE destinations SET active = 0")
+            self._db.execute(
+                "DELETE FROM destinations WHERE last_seen < ?",
+                (timestamp - DESTINATION_RETENTION_SEC,),
+            )
             for item in endpoints:
                 self._db.execute(
                     """
@@ -164,7 +171,7 @@ class Store:
                 ORDER BY last_seen DESC
                 LIMIT 1000
                 """,
-                (current - 20,),
+                (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
             ).fetchall()
             countries = self._db.execute(
                 """
@@ -175,7 +182,7 @@ class Store:
                 ORDER BY peers DESC
                 LIMIT 12
                 """,
-                (current - 20,),
+                (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
             ).fetchall()
             samples = self._db.execute(
                 """
@@ -197,3 +204,6 @@ class Store:
     def close(self) -> None:
         with self._lock:
             self._db.close()
+
+
+ENDPOINT_ACTIVE_WINDOW_SEC = 30

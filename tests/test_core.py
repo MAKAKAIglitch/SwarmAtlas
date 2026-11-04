@@ -26,3 +26,15 @@ def test_store_accumulates_interface_counters(tmp_path: Path) -> None:
     assert second["upload_total"] == 2_500
     assert second["download_total"] == 4_000
     store.close()
+
+
+def test_destination_history_is_pruned_after_30_days(tmp_path: Path) -> None:
+    store = Store(tmp_path / "retention.sqlite3")
+    store.update_destinations(
+        [{"ip": "203.0.113.10", "port": 443, "protocol": "TCP"}],
+        timestamp=1.0,
+    )
+    store.update_destinations([], timestamp=1.0 + 31 * 24 * 60 * 60)
+    count = store._db.execute("SELECT COUNT(*) FROM destinations").fetchone()[0]
+    assert count == 0
+    store.close()

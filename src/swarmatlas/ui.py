@@ -261,6 +261,7 @@ class MainWindow(QMainWindow):
         self.interface_combo.setCurrentIndex(max(0, saved_index))
         self.interface_combo.currentIndexChanged.connect(self.change_interface)
         header.addWidget(self.interface_combo)
+        header.addWidget(make_label("READ-ONLY", 9, ACCENT, 650))
         self.live_status = make_label("●  Starting monitor", 10, ACCENT, 600)
         header.addWidget(self.live_status)
         content_layout.addLayout(header)
@@ -340,7 +341,7 @@ class MainWindow(QMainWindow):
         content_layout.addLayout(bottom)
 
         self.data_note = make_label(
-            "Interface totals are measured by Windows. Destination byte attribution is not available in this preview.",
+            "Read-only monitoring: interface totals are exact; destination byte attribution is not available yet.",
             9, MUTED,
         )
         content_layout.addWidget(self.data_note)
@@ -406,7 +407,7 @@ class MainWindow(QMainWindow):
         self._fill_endpoints(endpoints)
 
         self.data_note.setText(
-            "Exact totals for the selected interface. Destination geography shows active endpoints; per-IP GB accounting is not implemented yet."
+            "Read-only: exact interface totals; endpoint locations are approximate. Bytes per IP/country are not attributed yet."
         )
 
     def _fill_countries(self, countries: list[dict[str, Any]]) -> None:
@@ -432,6 +433,11 @@ class MainWindow(QMainWindow):
             self.endpoint_table.setItem(row, 2, QTableWidgetItem(str(item["protocol"])))
 
     def closeEvent(self, event: Any) -> None:
-        if self.worker.isRunning():
-            self.worker.stop()
+        if self.worker.isRunning() and not self.worker.stop():
+            QMessageBox.warning(
+                self, "SwarmAtlas is still stopping",
+                "The read-only monitor has not finished its current OS query. Close the window again in a moment.",
+            )
+            event.ignore()
+            return
         event.accept()
