@@ -50,7 +50,7 @@ These are conservative defaults, not a promise of zero CPU usage. Actual overhea
 ## Requirements
 
 - Windows 10/11 (first target)
-- Python 3.12 (used by the Windows launcher and CI)
+- Python 3.11 or newer (the Windows launcher selects the newest installed Python 3 runtime)
 - A local GeoIP City database in .mmdb format is optional
 
 ## Run on Windows
@@ -62,7 +62,7 @@ On the first launch, the script creates \`.venv\` and installs SwarmAtlas with i
 
 To set it up manually from PowerShell:
 
-    py -3.12 -m venv .venv
+    py -3 -m venv .venv
     .\\.venv\\Scripts\\python -m pip install -e ".[geoip]"
     .\\.venv\\Scripts\\python -m swarmatlas
 
