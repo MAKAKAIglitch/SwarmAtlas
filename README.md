@@ -29,7 +29,7 @@ The Rust core is an ordinary user-mode Python extension using Windows IP Helper 
 
 ## GeoIP sources
 
-Open **GeoIP provider** in the sidebar to choose one of the following. The default is DB-IP Lite offline mode. The five online choices are opt-in; when one is selected, the public destination IP being looked up is sent to that provider. The provider also sees the user's public source IP as with any online request (and the account token if required). Process names, PIDs, traffic totals and packet contents are not sent. Provider API keys are saved in the local settings file and are not encrypted by SwarmAtlas.
+Open **GeoIP provider** in the sidebar to choose one of the following. The default is DB-IP Lite offline mode. The five online choices are opt-in; when one is selected, the public destination IP being looked up is sent to that provider. The provider also sees the user's public source IP as with any online request (and the account token if required). Process names, PIDs, traffic totals and packet contents are not sent. Each provider's API token is stored separately in the local settings file and is not encrypted by SwarmAtlas. A token entered for one provider is not reused for another.
 
 | Source | Mode and useful data | Important terms / limits |
 |---|---|---|
@@ -40,7 +40,7 @@ Open **GeoIP provider** in the sidebar to choose one of the following. The defau
 | **IPinfo Lite** | Online country and ASN/AS name | Requires an IPinfo token. Lite is country/ASN-level data; it does not provide city coordinates. Public use requires attribution. |
 | **2ip.io** | Online country, city and network/ASN data | Requires an API token. The provider advertises 10,000 free requests/month after registration and a free-token rate limit of 3 requests/second. SwarmAtlas stops at 9,500 requests/month to leave a safety margin. |
 
-The online providers are intentionally not queried in parallel: select one source at a time. Lookups run in a background worker, public IPs are cached in memory, provider request rates are limited, and daily and monthly free-tier budgets are tracked locally. Private, loopback and link-local addresses are never sent to a remote GeoIP API. Switching back to DB-IP Lite returns to local lookups.
+The online providers are intentionally not queried in parallel: select one source at a time. Lookups run in a background worker, public IPs are cached in memory, provider request rates are limited, and conservative daily and monthly free-tier budgets are tracked locally per installation; other applications or devices sharing the same public IP or API key may consume the provider's quota too. Private, loopback and link-local addresses are never sent to a remote GeoIP API. Switching back to DB-IP Lite returns to local lookups.
 
 **Privacy note:** online GeoIP necessarily discloses the looked-up destination IP to the selected provider. IP-API's free endpoint is unencrypted HTTP, so it is not a privacy-equivalent alternative to the HTTPS providers. Do not select it unless its non-commercial terms and transport characteristics suit your use. DB-IP Lite is recommended for private/offline use.
 
