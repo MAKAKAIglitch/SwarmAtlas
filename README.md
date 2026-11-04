@@ -50,25 +50,25 @@ These are conservative defaults, not a promise of zero CPU usage. Actual overhea
 ## Requirements
 
 - Windows 10/11 (first target)
-- Python 3.11 or newer
+- Python 3.12 (used by the Windows launcher and CI)
 - A local GeoIP City database in .mmdb format is optional
 
-## Run from source
+## Run on Windows
 
-Open PowerShell in the repository folder:
+1. Install Python 3.12 and make sure the Python Launcher (\`py\`) is available.
+2. Double-click \`run_windows.bat\`.
+
+On the first launch, the script creates \`.venv\` and installs SwarmAtlas with its optional GeoIP dependency. An internet connection is needed for this one-time package installation. Later launches reuse the existing environment.
+
+To set it up manually from PowerShell:
 
     py -3.12 -m venv .venv
-    .\.venv\Scripts\Activate.ps1
-    python -m pip install --upgrade pip
-    python -m pip install -e ".[geoip,dev]"
-    python -m swarmatlas
+    .\\.venv\\Scripts\\python -m pip install -e ".[geoip]"
+    .\\.venv\\Scripts\\python -m swarmatlas
 
-Without GeoIP support:
+For development dependencies:
 
-    python -m pip install -e .
-    python -m swarmatlas
-
-Or run run_windows.bat after installing the dependencies.
+    .\\.venv\\Scripts\\python -m pip install -e ".[geoip,dev]"
 
 ## GeoIP setup
 
@@ -80,7 +80,7 @@ IP geolocation is approximate. It generally indicates an ISP's registered or egr
 
 All application data stays on this PC:
 
-- Windows: %APPDATA%\SwarmAtlas\
+- Windows: %APPDATA%\\SwarmAtlas\\
 - Other platforms: ~/.local/share/SwarmAtlas/
 
 The SQLite database stores interface counters, traffic-rate samples, and observed public endpoint metadata. It never stores packet contents. No remote geolocation requests are made. Old endpoint records are removed after 30 days; traffic-rate samples are retained for 90 days.
