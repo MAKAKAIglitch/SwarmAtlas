@@ -154,6 +154,7 @@ class RemoteGeoLocator:
         self._monthly_usage_count = 0
         self._quota_reached = False
         self._monthly_quota_reached = False
+        self._provider_wait_until = 0.0
         self._usage_path = app_data_dir() / "geoip_provider_usage.json"
         self._load_usage()
         self._thread: threading.Thread | None = None
@@ -337,6 +338,14 @@ class RemoteGeoLocator:
             request = Request(self._url(ip), headers=headers)
         with urlopen(request, timeout=7) as response:
             payload = response.read(MAX_RESPONSE_BYTES + 1)
+            if self.provider == "ip-api" and str(response.headers.get("X-Rl", "")) == "0":
+                try:
+                    ttl = max(1.0, float(response.headers.get("X-Ttl", "60")))
+                except (TypeError, ValueError):
+                    ttl = 60.0
+                self._provider_wait_until = max(
+                    self._provider_wait_until, time.monotonic() + ttl
+                )
         if len(payload) > MAX_RESPONSE_BYTES:
             raise ValueError("GeoIP provider returned an oversized response")
         data = json.loads(payload.decode("utf-8"))
@@ -359,7 +368,8 @@ class RemoteGeoLocator:
                 continue
             try:
                 now = time.monotonic()
-                delay = max(0.0, next_request_at - now)
+                request_due = max(next_request_at, self._provider_wait_until)
+                delay = max(0.0, request_due - now)
                 if delay and self._stop.wait(delay):
                     break
                 today = datetime.now(timezone.utc).date().isoformat()
@@ -395,16 +405,41 @@ class RemoteGeoLocator:
                     backoff = 300.0
                     if isinstance(exc, HTTPError) and exc.code == 429:
                         try:
-                            backoff = max(60.0, min(3600.0, float(exc.headers.get("Retry-After", "300"))))
+                            backoff = max(
+                                60.0,
+                                min(
+                                    3600.0,
+                                    float(
+                                        exc.headers.get("Retry-After")
+                                        or exc.headers.get("X-Ttl")
+                                        or "300"
+                                    ),
+                                ),
+                            )
                         except (TypeError, ValueError):
                             backoff = 300.0
+                        # A rate-limit response applies to this client/provider,
+                        # not just the one destination IP.
+                        self._provider_wait_until = max(
+                            self._provider_wait_until, time.monotonic() + backoff
+                        )
                     with self._lock:
                         self._failed_until[ip] = time.monotonic() + backoff
                         while len(self._failed_until) > CACHE_LIMIT:
                             oldest = next(iter(self._failed_until))
                             self._failed_until.pop(oldest, None)
-                    self.status = f"{PROVIDER_NAMES[self.provider]} lookup failed: {type(exc).__name__}: {exc}"
-                    _LOGGER.debug("Remote GeoIP lookup failed for a destination address: %s", exc)
+                    detail = str(exc)
+                    if self.api_key:
+                        detail = detail.replace(self.api_key, "[redacted]")
+                    self.status = (
+                        f"{PROVIDER_NAMES[self.provider]} lookup failed: "
+                        f"{type(exc).__name__}: {detail}"
+                    )
+                    _LOGGER.debug(
+                        "Remote GeoIP lookup failed (%s): %s",
+                        type(exc).__name__,
+                        detail,
+                    )
                     continue
                 if result:
                     with self._lock:
