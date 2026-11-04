@@ -460,6 +460,24 @@ def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
     return True
 
 
+
+def verify_installed_native(venv_python: Path, root: Path) -> bool:
+    """Accept a native build only when its optimized endpoint API is present."""
+    script = (
+        "import _swarmatlas_native as n; "
+        "caps = set(n.capabilities()); "
+        f"required = {sorted(NATIVE_REQUIRED_CAPABILITIES)!r}; "
+        "missing = set(required) - caps; "
+        "assert not missing, f'Missing native capabilities: {sorted(missing)}'; "
+        "print('Verified Rust core:', n.__version__)"
+    )
+    result = subprocess.run(
+        [str(venv_python), "-c", script],
+        cwd=str(root),
+        text=True,
+    )
+    return result.returncode == 0
+
 def refresh_native_extension(root: Path) -> bool:
     """Update Rust only when the user has already enabled the optional extension."""
     venv_python = root / ".venv" / "Scripts" / "python.exe"
@@ -504,10 +522,10 @@ def refresh_native_extension(root: Path) -> bool:
                     env=env,
                     text=True,
                 )
-                if build.returncode == 0:
-                    say("[Updater] Rust monitoring core rebuilt successfully.")
+                if build.returncode == 0 and verify_installed_native(venv_python, root):
+                    say("[Updater] Rust monitoring core rebuilt and capability-checked successfully.")
                     return True
-                say("[WARNING] Local Rust rebuild failed; trying the verified prebuilt wheel.")
+                say("[WARNING] Local Rust rebuild failed verification; trying the verified prebuilt wheel.")
             else:
                 say("[WARNING] Could not prepare maturin; trying the verified prebuilt wheel.")
         else:
@@ -521,10 +539,10 @@ def refresh_native_extension(root: Path) -> bool:
                 env=env,
                 text=True,
             )
-            if build.returncode == 0:
-                say("[Updater] Rust monitoring core rebuilt successfully.")
+            if build.returncode == 0 and verify_installed_native(venv_python, root):
+                say("[Updater] Rust monitoring core rebuilt and capability-checked successfully.")
                 return True
-            say("[WARNING] Local Rust rebuild failed; trying the verified prebuilt wheel.")
+            say("[WARNING] Local Rust rebuild failed verification; trying the verified prebuilt wheel.")
     else:
         say("[Updater] Rust compiler not found; using the prebuilt stable-ABI wheel.")
 
