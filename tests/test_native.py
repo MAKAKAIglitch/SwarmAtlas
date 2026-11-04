@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
+from types import SimpleNamespace
+
 import pytest
+
+from swarmatlas import native as native_adapter
 
 
 native = pytest.importorskip("_swarmatlas_native")
@@ -29,6 +34,7 @@ def test_native_connection_tables_return_valid_rows() -> None:
     for row in tcp_rows:
         assert len(row) == 6
         assert isinstance(row[0], str)
+        assert ipaddress.ip_address(row[0]).is_global
         assert 0 <= int(row[1]) <= 65535
         assert row[2] == "TCP"
         assert int(row[3]) >= 0
@@ -39,3 +45,21 @@ def test_native_connection_tables_return_valid_rows() -> None:
         assert isinstance(row[0], str)
         assert 0 <= int(row[1]) <= 65535
         assert int(row[2]) >= 0
+
+
+
+def test_python_adapter_passes_display_limit_to_rust(monkeypatch) -> None:
+    calls: list[int] = []
+    fake = SimpleNamespace(
+        list_tcp_connections=lambda limit: (
+            calls.append(limit)
+            or [("8.8.8.8", 443, "TCP", 42, 50000, "ESTABLISHED")]
+        )
+    )
+    monkeypatch.setattr(native_adapter, "_native", fake)
+
+    rows = native_adapter.list_tcp_connections(limit=7)
+
+    assert calls == [7]
+    assert len(rows) == 1
+    assert rows[0]["ip"] == "8.8.8.8"
