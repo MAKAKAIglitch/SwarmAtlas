@@ -28,7 +28,7 @@ struct TcpRowV6 {
     owning_pid: u32,
 }
 
-pub(super) type TcpConnection = (String, u16, String, u32, u16, String);
+pub(crate) type TcpConnection = (String, u16, String, u32, u16, String);
 
 fn tcp_state(state: u32) -> &'static str {
     match state {
@@ -48,7 +48,7 @@ fn tcp_state(state: u32) -> &'static str {
     }
 }
 
-pub(super) fn list_tcp_connections(limit: usize) -> Result<Vec<TcpConnection>, String> {
+pub(crate) fn list_tcp_connections(limit: usize) -> Result<Vec<TcpConnection>, String> {
     let limit = limit.min(MAX_TABLE_ROWS);
     if limit == 0 {
         return Ok(Vec::new());
