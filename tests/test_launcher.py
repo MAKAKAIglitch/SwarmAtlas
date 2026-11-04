@@ -58,3 +58,4 @@ def test_launcher_checks_all_runtime_map_and_geoip_dependencies() -> None:
 def test_launcher_requires_the_optimized_native_endpoint_filter() -> None:
     assert "tcp-owner-pid" in NATIVE_CAPABILITY_ASSERTION
     assert "tcp-public-endpoints" in NATIVE_CAPABILITY_ASSERTION
+    assert "udp-socket-count" in NATIVE_CAPABILITY_ASSERTION
