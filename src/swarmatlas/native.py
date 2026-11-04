@@ -103,6 +103,17 @@ def list_tcp_connections(limit: int = 2000) -> list[dict[str, Any]]:
     return result
 
 
+def count_udp_bindings() -> int:
+    """Count local UDP bindings without crossing the PyO3 boundary for every row."""
+    if _native is None:
+        raise RuntimeError("The optional Rust extension is not installed")
+    counter = getattr(_native, "count_udp_bindings", None)
+    if callable(counter) and "udp-socket-count" in NATIVE_CAPABILITIES:
+        return max(0, int(counter()))
+    # Compatibility with older installed native wheels.
+    return len(list_udp_bindings())
+
+
 def list_udp_bindings(limit: int = NATIVE_UDP_SCAN_LIMIT) -> list[dict[str, Any]]:
     if _native is None:
         raise RuntimeError("The optional Rust extension is not installed")
