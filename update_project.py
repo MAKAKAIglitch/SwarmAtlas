@@ -184,7 +184,7 @@ def update_git_checkout(root: Path) -> bool:
         raise RuntimeError("This folder is a Git checkout, but git.exe is not in PATH.")
 
     status = subprocess.run(
-        [git, "-C", str(root), "status", "--porcelain"],
+        [git, "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -192,10 +192,23 @@ def update_git_checkout(root: Path) -> bool:
     )
     if status.returncode:
         raise RuntimeError(status.stderr.strip() or "Could not inspect Git working tree.")
-    if status.stdout.strip():
+    unsafe_changes: list[str] = []
+    for line in status.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        changed_path = line[3:].strip()
+        if " -> " in changed_path:
+            changed_path = changed_path.split(" -> ", 1)[1]
+        changed_path = changed_path.strip('"')
+        if should_skip(Path(changed_path)):
+            continue
+        unsafe_changes.append(line)
+
+    if unsafe_changes:
+        preview = "\\n".join(unsafe_changes[:5])
         raise RuntimeError(
-            "Local Git changes were found. Commit or back up those changes before updating; "
-            "the updater will not overwrite them."
+            "Local Git changes were found. Commit or back up those changes before updating. "
+            "The updater will not overwrite them.\\n" + preview
         )
 
     say("[Updater] Clean Git checkout detected; updating with fast-forward only...")
