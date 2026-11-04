@@ -336,6 +336,7 @@ class TrafficChart(QWidget):
         self.empty_text = empty_text
         self.upload: list[float] = []
         self.download: list[float] = []
+        self._samples_source: list[dict[str, Any]] | None = None
 
     def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
         self.palette_colors = palette
@@ -343,8 +344,11 @@ class TrafficChart(QWidget):
         self.update()
 
     def set_samples(self, samples: list[dict[str, Any]]) -> None:
+        if samples is self._samples_source:
+            return
         upload = [float(item["upload_bps"]) for item in samples]
         download = [float(item["download_bps"]) for item in samples]
+        self._samples_source = samples
         if upload == self.upload and download == self.download:
             return
         self.upload = upload
@@ -414,6 +418,7 @@ class WorldMap(QWidget):
         self.palette_colors = palette
         self.empty_text = empty_text
         self.locations: list[dict[str, Any]] = []
+        self._location_source: list[dict[str, Any]] | None = None
         self._location_signature: tuple[tuple[Any, ...], ...] | None = None
         self._location_world_points: list[QPointF] = []
         self.country_path = QPainterPath()
@@ -452,6 +457,10 @@ class WorldMap(QWidget):
         self.update()
 
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
+        # NetworkWorker reuses these immutable snapshot lists between socket
+        # scans. Skip even signature construction while the source object is the same.
+        if locations is self._location_source:
+            return
         valid: list[dict[str, Any]] = []
         signature: list[tuple[Any, ...]] = []
         for item in locations:
@@ -477,6 +486,7 @@ class WorldMap(QWidget):
             return
 
         self.locations = valid
+        self._location_source = locations
         self._location_signature = new_signature
         self._location_world_points = [
             self._normalized_point(float(item["longitude"]), float(item["latitude"]))
