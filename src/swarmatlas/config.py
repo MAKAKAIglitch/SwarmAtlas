@@ -20,6 +20,8 @@ def app_data_dir() -> Path:
 class AppConfig:
     interface: str = "auto"
     geoip_database: str = ""
+    theme: str = "dark"
+    language: str = "ru"
 
     @classmethod
     def load(cls) -> "AppConfig":
@@ -28,9 +30,13 @@ class AppConfig:
             return cls()
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
+            theme = str(raw.get("theme", "dark"))
+            language = str(raw.get("language", "ru"))
             return cls(
                 interface=str(raw.get("interface", "auto")),
                 geoip_database=str(raw.get("geoip_database", "")),
+                theme=theme if theme in {"dark", "light"} else "dark",
+                language=language if language in {"ru", "en"} else "ru",
             )
         except (OSError, ValueError, TypeError):
             return cls()
