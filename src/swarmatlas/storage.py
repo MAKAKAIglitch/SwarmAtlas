@@ -354,14 +354,40 @@ class Store:
         return [dict(row) for row in rows]
 
     def update_destinations(self, endpoints: list[dict[str, Any]], timestamp: float) -> None:
+        """Persist a scan in one batch without rewriting every historical row."""
         with self._lock, self._db:
-            self._db.execute("UPDATE destinations SET active = 0")
+            # last_seen already defines the active window in summary(). Resetting
+            # active on every scan wrote every historical row to the WAL for no gain.
             self._db.execute(
                 "DELETE FROM destinations WHERE last_seen < ?",
                 (timestamp - DESTINATION_RETENTION_SEC,),
             )
-            for item in endpoints:
-                self._db.execute(
+
+            if endpoints:
+                parameters = [
+                    (
+                        item["ip"],
+                        item["port"],
+                        item["protocol"],
+                        int(item.get("process_id") or 0),
+                        int(item.get("local_port") or 0),
+                        item.get("process_name"),
+                        item.get("connection_state"),
+                        timestamp,
+                        timestamp,
+                        item.get("country_code"),
+                        item.get("country"),
+                        item.get("region"),
+                        item.get("city"),
+                        item.get("asn"),
+                        item.get("organization"),
+                        item.get("isp"),
+                        item.get("latitude"),
+                        item.get("longitude"),
+                    )
+                    for item in endpoints
+                ]
+                self._db.executemany(
                     """
                     INSERT INTO destinations (
                         ip, port, protocol, process_id, local_port, process_name,
@@ -384,35 +410,21 @@ class Store:
                         longitude = COALESCE(excluded.longitude, destinations.longitude),
                         active = 1
                     """,
-                    (
-                        item["ip"],
-                        item["port"],
-                        item["protocol"],
-                        int(item.get("process_id") or 0),
-                        int(item.get("local_port") or 0),
-                        item.get("process_name"),
-                        item.get("connection_state"),
-                        timestamp,
-                        timestamp,
-                        item.get("country_code"),
-                        item.get("country"),
-                        item.get("region"),
-                        item.get("city"),
-                        item.get("asn"),
-                        item.get("organization"),
-                        item.get("isp"),
-                        item.get("latitude"),
-                        item.get("longitude"),
-                    ),
+                    parameters,
                 )
 
-            row_count = int(self._db.execute("SELECT COUNT(*) FROM destinations").fetchone()[0])
+            # Count/cull remains bounded to the configured history cap. Evict
+            # oldest observations first; current peers naturally have newer
+            # last_seen values and do not need a full-table active-flag update.
+            row_count = int(self._db.execute(
+                "SELECT COUNT(*) FROM destinations"
+            ).fetchone()[0])
             excess = row_count - MAX_DESTINATION_ROWS
             if excess > 0:
                 victims = self._db.execute(
                     """
                     SELECT ip, port, protocol, process_id FROM destinations
-                    ORDER BY active ASC, last_seen ASC LIMIT ?
+                    ORDER BY last_seen ASC LIMIT ?
                     """,
                     (excess,),
                 ).fetchall()
