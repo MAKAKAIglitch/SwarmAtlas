@@ -176,36 +176,30 @@ class Store:
             )
             """
         )
-        # Collapse rows that differ only by ephemeral local port. This preserves
-        # per-process destinations while preventing reconnects from creating a
-        # separate history row for every local TCP source port.
-        aggregates = {
-            "ip": "ip",
-            "port": "port",
-            "protocol": "protocol",
-            "process_id": "COALESCE(process_id, 0)",
-            "local_port": "MAX(COALESCE(local_port, 0))",
-            "process_name": "MAX(process_name)",
-            "connection_state": "MAX(connection_state)",
-            "first_seen": "MIN(first_seen)",
-            "last_seen": "MAX(last_seen)",
-            "country_code": "MAX(country_code)",
-            "country": "MAX(country)",
-            "region": "MAX(region)",
-            "city": "MAX(city)",
-            "asn": "MAX(asn)",
-            "organization": "MAX(organization)",
-            "isp": "MAX(isp)",
-            "latitude": "MAX(latitude)",
-            "longitude": "MAX(longitude)",
-            "active": "MAX(active)",
-        }
+        # Old databases may not have process_id or local_port columns. Build
+        # aggregation expressions from the source schema before grouping.
+        source_pid = "COALESCE(process_id, 0)" if "process_id" in existing else "0"
+        aggregates: dict[str, str] = {}
+        for column in DESTINATION_COLUMNS:
+            if column not in existing:
+                aggregates[column] = defaults[column]
+            elif column == "process_id":
+                aggregates[column] = source_pid
+            elif column == "local_port":
+                aggregates[column] = "MAX(COALESCE(local_port, 0))"
+            elif column == "first_seen":
+                aggregates[column] = "MIN(first_seen)"
+            elif column in {"last_seen", "active"}:
+                aggregates[column] = f"MAX({column})"
+            else:
+                aggregates[column] = f"MAX({column})"
+
         columns_sql = ", ".join(DESTINATION_COLUMNS)
         expressions_sql = ", ".join(aggregates[column] for column in DESTINATION_COLUMNS)
         self._db.execute(
             f"INSERT OR REPLACE INTO destinations_migration ({columns_sql}) "
             "SELECT " + expressions_sql + " FROM destinations "
-            "GROUP BY ip, port, protocol, COALESCE(process_id, 0)"
+            "GROUP BY ip, port, protocol, " + source_pid
         )
         self._db.execute("DROP TABLE destinations")
         self._db.execute("ALTER TABLE destinations_migration RENAME TO destinations")
