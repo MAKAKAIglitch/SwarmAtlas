@@ -102,15 +102,24 @@ The current Windows UDP ownership API reports local socket bindings; it does **n
 
 The Rust module is optional. Without it, the existing psutil-based Python collector continues to run. The status bar identifies which backend is active.
 
-To build the optional Rust module:
+**Install the prebuilt wheel (no Rust compiler required):**
+
+1. Download the `swarmatlas-native-win-x64` artifact from the [successful Windows CI run](https://github.com/MAKAKAIglitch/SwarmAtlas/actions/runs/41860620538).
+2. Extract the artifact ZIP and copy its `.whl` file into `native\\dist\\` inside your SwarmAtlas folder.
+3. Close SwarmAtlas and double-click `install_native_wheel.bat`.
+4. Restart SwarmAtlas. The status bar will show whether the Rust core loaded.
+
+The artifact is built for Windows x64 and regular CPython 3.11 or newer, using PyO3's stable `abi3-py311` ABI. GitHub Actions retains the artifact for 14 days.
+
+**Build locally instead:**
 
 1. Install the stable Rust toolchain (Rust 1.85 or newer) from [rustup.rs](https://rustup.rs/). The Windows MSVC linker and Windows SDK must also be available.
 2. Run `build_native.bat` from the SwarmAtlas folder.
 3. Restart SwarmAtlas.
 
-To compare the TCP table enumeration time on your own PC, run `\.venv\Scripts\python.exe benchmarks\benchmark_native.py --iterations 50`. The benchmark reports only aggregate timings and row counts; it does not print or save peer IPs or process names. Compare its local results rather than assuming Rust is faster on every machine.
+The local build uses PyO3 0.30.1 and maturin 1.16.0. Both installation paths use the same optional read-only module; neither installs drivers nor changes Windows networking.
 
-The build uses PyO3 0.30.1 with the stable `abi3-py311` ABI and maturin 1.16.0. The Windows wheel is therefore compatible with regular CPython 3.11 and newer, instead of being tied to the CI Python 3.12 minor version. It compiles locally for the current Windows/Python environment; it does not install drivers or alter Windows networking. GitHub Actions also builds and tests a Windows x64 wheel and retains it as a workflow artifact.
+To compare TCP table enumeration on your own PC, run `\.venv\Scripts\python.exe benchmarks\benchmark_native.py --iterations 50`. The benchmark prints only aggregate row counts and timings; it does not print or save peer IPs or process names. Treat the result as a local measurement, not a universal speed guarantee.
 
 Rust is being introduced incrementally. Interface byte counters, SQLite, UI and GeoIP orchestration remain Python-side for now. Per-IP byte accounting is not implemented by this TCP/UDP table reader.
 
