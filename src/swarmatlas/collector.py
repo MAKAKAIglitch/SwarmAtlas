@@ -5,7 +5,6 @@ import logging
 import socket
 import threading
 import time
-from collections import defaultdict
 from typing import Any
 
 import psutil
@@ -20,8 +19,8 @@ from .native import (
     NATIVE_AVAILABLE,
     NATIVE_CAPABILITIES,
     backend_status,
+    count_udp_bindings,
     list_tcp_connections,
-    list_udp_bindings,
 )
 from .storage import Store
 from .theme import resolve_language
@@ -243,29 +242,6 @@ def _enrich_endpoints_with_geoip(
         endpoint.update(location)
 
 
-def _udp_owner_index() -> tuple[
-    dict[tuple[str, int], int], dict[int, set[int]], int, str | None
-]:
-    exact: dict[tuple[str, int], int] = {}
-    by_port: dict[int, set[int]] = defaultdict(set)
-    if not NATIVE_AVAILABLE:
-        return exact, by_port, 0, None
-
-    try:
-        bindings = list_udp_bindings()
-        for binding in bindings:
-            process_id = binding.get("process_id")
-            local_port = int(binding["local_port"])
-            local_ip = str(binding["local_ip"])
-            if process_id:
-                exact[(local_ip, local_port)] = int(process_id)
-                by_port[local_port].add(int(process_id))
-        return exact, by_port, len(bindings), None
-    except Exception as exc:
-        # UDP bindings are supplemental; TCP ownership remains available.
-        return {}, {}, 0, f"{type(exc).__name__}: {exc}"
-
-
 def _interleave_endpoints(
     tcp: dict[tuple[str, int, str, int, int], dict[str, Any]],
     udp: dict[tuple[str, int, str, int, int], dict[str, Any]],
@@ -381,52 +357,15 @@ def collect_public_endpoint_snapshot(
                     if len(tcp_found) >= max_items:
                         break
 
-            udp_exact, udp_by_port, udp_binding_count, udp_binding_error = _udp_owner_index()
+            # Windows' owner-PID UDP table contains local bindings only; it
+            # has no remote address field. Count it in Rust without asking
+            # psutil to read and materialize the same table a second time.
             try:
-                udp_connections = psutil.net_connections(kind="udp")
-                udp_binding_count = max(udp_binding_count, len(udp_connections))
-            except psutil.Error as exc:
-                udp_connections = []
-                if udp_binding_error is None:
-                    udp_binding_error = f"{type(exc).__name__}: {exc}"
-
-            udp_owner_pids = (
-                process_id
-                for matches in udp_by_port.values()
-                for process_id in matches
-            )
-            _warm_process_name_cache(
-                [getattr(connection, "pid", None) for connection in udp_connections]
-                + list(udp_owner_pids)
-            )
-            for connection in udp_connections:
-                parsed = _parse_remote(connection.raddr)
-                if parsed is None:
-                    # Windows normally reports only the local address for an
-                    # unconnected UDP socket. Count it as a socket, never as a
-                    # guessed remote peer.
-                    continue
-                ip, port = parsed
-                local = _address_parts(connection.laddr)
-                local_ip, local_port = local if local is not None else ("", 0)
-                process_id = getattr(connection, "pid", None)
-                if not process_id:
-                    process_id = udp_exact.get((local_ip, local_port))
-                if not process_id:
-                    matches = udp_by_port.get(local_port, set())
-                    if len(matches) == 1:
-                        process_id = next(iter(matches))
-                endpoint = _make_endpoint(
-                    ip, port, "UDP", process_id, local_port, "CONNECTED"
-                )
-                key = (
-                    ip, port, "UDP",
-                    int(endpoint.get("process_id") or 0),
-                    int(endpoint.get("local_port") or 0),
-                )
-                udp_found[key] = endpoint
-                if len(udp_found) >= max_items:
-                    break
+                udp_binding_count = count_udp_bindings()
+                udp_binding_error = None
+            except Exception as exc:
+                udp_binding_count = 0
+                udp_binding_error = f"{type(exc).__name__}: {exc}"
 
             stats = {
                 "udp_local_sockets": udp_binding_count,
