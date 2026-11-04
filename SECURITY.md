@@ -31,7 +31,7 @@ The monitor itself should not bind/listen on a port or create tunnels. The curre
 
 ## Local data
 
-Observed public IPs, process IDs/names, GeoIP metadata, settings and traffic history remain in the user's local SwarmAtlas data directory. They are not uploaded to a SwarmAtlas service. The update helper only contacts GitHub when the user runs it; the first-run package installer downloads its declared dependencies from the configured package index.
+Observed public IPs, process IDs/names, GeoIP metadata, settings and traffic history remain in the user's local SwarmAtlas data directory. They are not uploaded to a SwarmAtlas service. The update helper only contacts GitHub when the user runs it. When the optional Rust extension is already installed, the updater may download the public Windows wheel and its SHA-256 manifest from the repository's `native-latest` Release, verify the digest and install the local file. The first-run package installer downloads its declared dependencies from the configured package index. No peer IPs, process names, PIDs or usage statistics are included in these requests.
 
 SQLite history and diagnostic logs are not encrypted at rest by SwarmAtlas. They rely on the Windows user-profile file permissions. Anyone with read access to that Windows account can inspect saved peer IPs, process names and local paths. Do not publish the database or logs publicly.
 
