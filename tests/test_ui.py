@@ -64,3 +64,46 @@ def test_world_map_zoom_controls_and_vector_boundaries_render_offscreen() -> Non
     assert widget._nearest_location(widget._screen_point(-122.0, 37.4)) == 0
     widget.deleteLater()
     app.processEvents()
+
+
+def test_osm_world_map_uses_web_mercator_and_caps_at_city_region_zoom(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    widget = WorldMap(get_palette("light"), "No map data")
+    widget.resize(640, 320)
+
+    center = widget._normalized_point(0.0, 0.0)
+    north = widget._normalized_point(0.0, WorldMap.MERCATOR_MAX_LAT)
+    south = widget._normalized_point(0.0, -WorldMap.MERCATOR_MAX_LAT)
+
+    assert abs(center.x() - 0.5) < 1e-9
+    assert abs(center.y() - 0.5) < 1e-9
+    assert north.y() < 1e-6
+    assert south.y() > 1.0 - 1e-6
+    assert abs(widget._map_rect().width() - widget._map_rect().height()) < 1e-9
+
+    assert WorldMap._tile_zoom_for_scale(1.0) == 2
+    assert WorldMap._tile_zoom_for_scale(2.0) == 3
+    assert WorldMap._tile_zoom_for_scale(64.0) == 8
+    assert WorldMap._tile_zoom_for_scale(256.0) == WorldMap.TILE_MAX_ZOOM
+
+    widget._zoom_at(widget._map_rect().center(), 1000.0)
+    assert widget._zoom == 64.0
+    widget.deleteLater()
+    app.processEvents()
+
+
+def test_map_attribution_includes_openstreetmap_contributors(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+
+    attribution = window._map_attribution_html()
+    assert "OpenStreetMap contributors" in attribution
+    assert "openstreetmap.org/copyright" in attribution
+
+    window.close()
+    window.deleteLater()
+    app.processEvents()
