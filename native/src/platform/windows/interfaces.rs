@@ -54,7 +54,12 @@ pub(crate) fn list_network_interfaces() -> Result<Vec<NetworkInterface>, String>
         if alias.is_empty() {
             continue;
         }
-        result.push((alias, row.OperStatus == IfOperStatusUp, row.OutOctets, row.InOctets));
+        result.push((
+            alias,
+            row.OperStatus == IfOperStatusUp,
+            row.OutOctets,
+            row.InOctets,
+        ));
     }
     Ok(result)
 }
