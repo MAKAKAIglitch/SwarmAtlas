@@ -506,6 +506,15 @@ class NetworkWorker(QThread):
             last_history_sample = 0.0
             upload_rate = 0.0
             download_rate = 0.0
+            interface_totals = {"upload_total": 0, "download_total": 0}
+            cached_destination_summary: dict[str, Any] = {
+                "active_endpoints": [],
+                "countries": [],
+                "regions": [],
+            }
+            cached_history: list[dict[str, Any]] = []
+            cached_history_range: int | None = None
+            last_history_refresh = 0.0
             connection_status = "Waiting for first network sample"
 
             while not self._stop_event.is_set():
@@ -566,6 +575,10 @@ class NetworkWorker(QThread):
                     totals = store.record_interface(
                         interface, current.bytes_sent, current.bytes_recv, now_wall
                     )
+                    interface_totals = {
+                        "upload_total": int(totals["upload_total"]),
+                        "download_total": int(totals["download_total"]),
+                    }
                     upload_rate = totals["upload_delta"] / elapsed
                     download_rate = totals["download_delta"] / elapsed
                 else:
@@ -578,6 +591,13 @@ class NetworkWorker(QThread):
                         for endpoint in endpoints:
                             endpoint.update(locator.lookup(endpoint["ip"]))
                         store.update_destinations(endpoints, now_wall)
+                        if interface:
+                            summary = store.summary(interface, now_wall)
+                            cached_destination_summary = {
+                                "active_endpoints": summary["active_endpoints"],
+                                "countries": summary["countries"],
+                                "regions": summary["regions"],
+                            }
                         owner_count = sum(
                             1 for endpoint in endpoints if endpoint.get("process_id")
                         )
@@ -613,9 +633,24 @@ class NetworkWorker(QThread):
                     store.add_sample(now_wall, upload_rate, download_rate)
                     last_history_sample = now_mono
 
+                # History rows only change every ten seconds (or when the user
+                # changes the selected range). Do not run an aggregation query on
+                # every one-second rate tick.
+                history_range_changed = cached_history_range != history_range_seconds
+                history_refresh_due = (
+                    now_mono - last_history_refresh >= HISTORY_SAMPLE_INTERVAL_SEC
+                )
+                if history_range_changed or history_refresh_due:
+                    cached_history = store.history(history_range_seconds, now_wall)
+                    cached_history_range = history_range_seconds
+                    last_history_refresh = now_mono
+
                 if interface:
-                    payload = store.summary(interface, now_wall)
-                    payload["samples"] = store.history(history_range_seconds, now_wall)
+                    payload = {
+                        **interface_totals,
+                        **cached_destination_summary,
+                        "samples": cached_history,
+                    }
                     payload.update({
                         "history_range_seconds": history_range_seconds,
                         "interface": interface,
