@@ -222,6 +222,22 @@ def _make_endpoint(
     }
 
 
+
+def _enrich_endpoints_with_geoip(
+    endpoints: list[dict[str, Any]],
+    locator: GeoLocator,
+) -> None:
+    """Look up each destination IP once per scan, even if many sockets share it."""
+    locations: dict[str, dict[str, Any]] = {}
+    for endpoint in endpoints:
+        ip = str(endpoint["ip"])
+        location = locations.get(ip)
+        if location is None:
+            location = locator.lookup(ip)
+            locations[ip] = location
+        endpoint.update(location)
+
+
 def _udp_owner_index() -> tuple[
     dict[tuple[str, int], int], dict[int, set[int]], int, str | None
 ]:
@@ -679,8 +695,7 @@ class NetworkWorker(QThread):
                 if now_mono - last_endpoint_scan >= ENDPOINT_SCAN_INTERVAL_SEC:
                     try:
                         endpoints, endpoint_stats = collect_public_endpoint_snapshot()
-                        for endpoint in endpoints:
-                            endpoint.update(locator.lookup(endpoint["ip"]))
+                        _enrich_endpoints_with_geoip(endpoints, locator)
                         store.update_destinations(endpoints, now_wall)
                         cached_destination_summary = store.destination_summary(now_wall)
                         owner_count = sum(
