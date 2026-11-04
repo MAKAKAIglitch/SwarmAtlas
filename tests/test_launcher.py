@@ -4,7 +4,7 @@ import io
 import sys
 from pathlib import Path
 
-from run_windows import DEPENDENCY_PROBE, stream_process
+from run_windows import DEPENDENCY_PROBE, NATIVE_CAPABILITY_ASSERTION, stream_process
 
 
 def test_stream_process_duplicates_stdout_and_stderr_to_log(tmp_path: Path) -> None:
@@ -53,3 +53,8 @@ def test_launcher_checks_all_runtime_map_and_geoip_dependencies() -> None:
     assert "maxminddb" in DEPENDENCY_PROBE
     assert "shapefile" in DEPENDENCY_PROBE
     assert "swarmatlas" in DEPENDENCY_PROBE
+
+
+def test_launcher_requires_the_optimized_native_endpoint_filter() -> None:
+    assert "tcp-owner-pid" in NATIVE_CAPABILITY_ASSERTION
+    assert "tcp-public-endpoints" in NATIVE_CAPABILITY_ASSERTION
