@@ -166,6 +166,56 @@ def test_prebuilt_native_update_restores_old_extension_after_failed_verification
     assert module.read_bytes() == b"previous-working-extension"
 
 
+
+def test_native_backup_survives_when_automatic_rollback_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+    import update_project
+
+    root = tmp_path
+    venv = root / ".venv"
+    python = venv / "Scripts" / "python.exe"
+    module = venv / "Lib" / "site-packages" / "_swarmatlas_native.abi3.pyd"
+    python.parent.mkdir(parents=True)
+    module.parent.mkdir(parents=True)
+    python.write_bytes(b"python")
+    module.write_bytes(b"previous-working-extension")
+
+    def fake_download(_url: str, destination: Path, _maximum: int) -> None:
+        destination.write_bytes(b"wheel-or-manifest")
+
+    monkeypatch.setattr(update_project, "download_limited_asset", fake_download)
+    monkeypatch.setattr(update_project, "verify_native_wheel", lambda *_args: None)
+
+    def fake_run(command, **kwargs):
+        command = [str(part) for part in command]
+        if "-c" in command:
+            script = command[-1]
+            if "find_spec" in script:
+                return subprocess.CompletedProcess(command, 0, stdout=str(module), stderr="")
+            if "capabilities" in script:
+                module.write_bytes(b"broken-new-extension")
+                return subprocess.CompletedProcess(command, 1, stdout="", stderr="import failed")
+        if "pip" in command:
+            module.write_bytes(b"new-extension")
+            return subprocess.CompletedProcess(command, 0)
+        raise AssertionError(f"Unexpected updater command: {command}")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    def fail_restore(_source, _destination):
+        raise OSError("simulated restore failure")
+
+    monkeypatch.setattr(update_project.os, "replace", fail_restore)
+
+    with pytest.raises(RuntimeError, match="backup was preserved at"):
+        install_prebuilt_native(root, python)
+
+    backup = module.with_name(module.name + ".swarmatlas-backup")
+    assert backup.is_file()
+    assert backup.read_bytes() == b"previous-working-extension"
+
 def test_updater_rebuilds_installed_native_extension_when_toolchain_exists(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -369,7 +369,17 @@ def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
         # Keep a byte-for-byte backup so failed installation/import checks can
         # restore the previous .pyd instead of leaving a broken native module.
         previous_module = _installed_native_module_path(root, venv_python)
-        backup_path = directory / "previous_native_module.bak"
+        # Keep the backup beside the installed extension, not in the
+        # temporary download directory: it must survive even if rollback fails.
+        backup_path = previous_module.with_name(
+            previous_module.name + ".swarmatlas-backup"
+        )
+        suffix = 1
+        while backup_path.exists():
+            backup_path = previous_module.with_name(
+                f"{previous_module.name}.swarmatlas-backup-{suffix}"
+            )
+            suffix += 1
         shutil.copy2(previous_module, backup_path)
 
         say("[Updater] Native wheel SHA-256 verified. Installing the local file...")
@@ -419,14 +429,23 @@ def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
                 )
                 shutil.copy2(backup_path, restore_path)
                 os.replace(restore_path, previous_module)
+                backup_path.unlink(missing_ok=True)
                 say("[Updater] Previous Rust extension restored successfully.")
             except Exception as rollback_error:
                 raise RuntimeError(
                     "Native update failed and automatic rollback also failed. "
-                    f"Previous extension backup: {backup_path.name}; "
+                    f"Previous extension backup was preserved at: {backup_path}; "
                     f"restore error: {type(rollback_error).__name__}."
                 ) from install_error
             raise
+
+        try:
+            backup_path.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            say(
+                "[WARNING] Native update succeeded, but the old extension backup "
+                f"could not be removed: {type(cleanup_error).__name__}."
+            )
 
     say("[Updater] Prebuilt Rust core updated successfully.")
     return True
