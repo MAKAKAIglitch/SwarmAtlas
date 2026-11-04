@@ -195,10 +195,19 @@ class GeoIPProviderDialog(QDialog):
         ("2ip", "provider_2ip"),
     )
 
-    def __init__(self, provider: str, api_key: str, language: str, palette: dict[str, str], parent=None):
+    def __init__(
+        self,
+        provider: str,
+        api_keys: dict[str, str],
+        language: str,
+        palette: dict[str, str],
+        parent=None,
+    ):
         super().__init__(parent)
         self.language = language
         self.palette = palette
+        self.api_keys = dict(api_keys)
+        self._active_provider = provider
         self.setWindowTitle(tr("geoip_settings", language))
         self.setMinimumWidth(560)
 
@@ -220,7 +229,7 @@ class GeoIPProviderDialog(QDialog):
 
         self.key_label = make_label(tr("geoip_api_key", language), 9, palette["muted"], 600)
         layout.addWidget(self.key_label)
-        self.api_key_input = QLineEdit(api_key)
+        self.api_key_input = QLineEdit(self.api_keys.get(provider, ""))
         self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_input.setPlaceholderText(tr("geoip_api_key_placeholder", language))
         layout.addWidget(self.api_key_input)
@@ -248,6 +257,10 @@ class GeoIPProviderDialog(QDialog):
 
     def _sync_provider(self, *_args: Any) -> None:
         provider = str(self.provider_combo.currentData() or "dbip")
+        if provider != self._active_provider:
+            self.api_keys[self._active_provider] = self.api_key_input.text().strip()
+            self._active_provider = provider
+            self.api_key_input.setText(self.api_keys.get(provider, ""))
         self.key_label.setVisible(provider != "dbip")
         self.api_key_input.setVisible(provider != "dbip")
         self.api_key_input.setEnabled(provider != "dbip")
@@ -260,8 +273,15 @@ class GeoIPProviderDialog(QDialog):
     def selected_provider(self) -> str:
         return str(self.provider_combo.currentData() or "dbip")
 
-    def selected_api_key(self) -> str:
-        return self.api_key_input.text().strip()
+    def selected_api_keys(self) -> dict[str, str]:
+        values = dict(self.api_keys)
+        current_provider = self.selected_provider()
+        current_key = self.api_key_input.text().strip()
+        if current_key:
+            values[current_provider] = current_key
+        else:
+            values.pop(current_provider, None)
+        return values
 
 
 class TrafficChart(QWidget):
@@ -1096,7 +1116,7 @@ class MainWindow(QMainWindow):
     def configure_geoip_provider(self) -> None:
         dialog = GeoIPProviderDialog(
             self.config.geoip_provider,
-            self.config.geoip_api_key,
+            self.config.geoip_api_keys,
             self.current_language,
             self.palette,
             self,
@@ -1104,7 +1124,10 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.config.geoip_provider = dialog.selected_provider()
-        self.config.geoip_api_key = dialog.selected_api_key()
+        self.config.geoip_api_keys = dialog.selected_api_keys()
+        self.config.geoip_api_key = self.config.geoip_api_keys.get(
+            self.config.geoip_provider, ""
+        )
         self.config.save()
         self.worker.set_geoip_provider(self.config.geoip_provider, self.config.geoip_api_key)
         self.map_attribution_label.setText(self._map_attribution_html())
@@ -1169,6 +1192,7 @@ class MainWindow(QMainWindow):
         self.config.geoip_databases = paths
         self.config.geoip_database = paths[0] if paths else ""
         self.config.geoip_provider = "dbip"
+        self.config.geoip_api_key = ""
         self.config.save()
         self.worker.set_geoip_databases(paths)
         self.worker.set_geoip_provider("dbip", self.config.geoip_api_key)
