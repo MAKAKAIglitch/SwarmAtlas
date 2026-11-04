@@ -270,7 +270,9 @@ class Store:
 
     def _compact_history(self, timestamp: float) -> None:
         """Fold samples older than seven days into compact hourly aggregates."""
-        cutoff = timestamp - HISTORY_RAW_RETENTION_SEC
+        # Compact only complete hour buckets; otherwise a bucket straddling the cutoff
+        # would appear both in the hourly table and in the still-raw samples.
+        cutoff = math.floor((timestamp - HISTORY_RAW_RETENTION_SEC) / 3600) * 3600
         with self._lock, self._db:
             self._db.execute(
                 """
