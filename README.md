@@ -29,7 +29,7 @@ The Rust core is an ordinary user-mode Python extension using Windows IP Helper 
 
 ## GeoIP sources
 
-Open **GeoIP provider** in the sidebar to choose one of the following. The default is DB-IP Lite offline mode. The five online choices are opt-in; when one is selected, only the public destination IP being looked up is sent to that provider. Process names, PIDs, traffic totals and packet contents are not sent. Provider API keys are saved in the local settings file and are not encrypted by SwarmAtlas.
+Open **GeoIP provider** in the sidebar to choose one of the following. The default is DB-IP Lite offline mode. The five online choices are opt-in; when one is selected, the public destination IP being looked up is sent to that provider. The provider also sees the user's public source IP as with any online request (and the account token if required). Process names, PIDs, traffic totals and packet contents are not sent. Provider API keys are saved in the local settings file and are not encrypted by SwarmAtlas.
 
 | Source | Mode and useful data | Important terms / limits |
 |---|---|---|
