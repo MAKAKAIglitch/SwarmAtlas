@@ -53,7 +53,8 @@ def _radial_filter_projected(
     threshold = tolerance * tolerance
     radial = [points[0]]
     last_x, last_y = points[0]
-    for x, y in points[1:-1]:
+    for index in range(1, len(points) - 1):
+        x, y = points[index]
         dx = x - last_x
         dy = y - last_y
         if dx * dx + dy * dy >= threshold:
@@ -128,7 +129,8 @@ def _project_and_simplify_ring(
     radial = [first]
     last_x, last_y = first
 
-    for longitude, latitude in points[1:-1]:
+    for index in range(1, len(points) - 1):
+        longitude, latitude = points[index]
         x, y = _project(float(longitude), float(latitude))
         dx = x - last_x
         dy = y - last_y
