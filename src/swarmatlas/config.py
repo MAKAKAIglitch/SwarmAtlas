@@ -71,7 +71,7 @@ class AppConfig:
             legacy = str(raw.get("geoip_database", ""))
             if not databases and legacy:
                 databases = [legacy]
-            valid_providers = {"dbip", "ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "2ip"}
+            valid_providers = {"dbip", "ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "ip2location", "2ip"}
             provider_value = str(raw.get("geoip_provider", "dbip"))
             provider = provider_value if provider_value in valid_providers else "dbip"
             raw_keys = raw.get("geoip_api_keys", {})
@@ -104,7 +104,7 @@ class AppConfig:
     def save(self) -> None:
         self.geoip_databases = self.configured_geoip_databases()
         self.geoip_database = self.geoip_databases[0] if self.geoip_databases else ""
-        valid_keys = {"ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "2ip"}
+        valid_keys = {"ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "ip2location", "2ip"}
         self.geoip_api_keys = {
             str(provider): str(key)
             for provider, key in self.geoip_api_keys.items()
