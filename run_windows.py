@@ -7,7 +7,6 @@ import sys
 import tempfile
 import traceback
 from datetime import datetime
-from io import TextIOBase
 from pathlib import Path
 from typing import Sequence, TextIO
 
