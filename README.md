@@ -104,12 +104,12 @@ The Rust module is optional. Without it, the existing psutil-based Python collec
 
 **Install the prebuilt wheel (no Rust compiler required):**
 
-1. Download the `swarmatlas-native-win-x64` artifact from the [successful Windows CI run](https://github.com/MAKAKAIglitch/SwarmAtlas/actions/runs/41860620538).
-2. Extract the artifact ZIP and copy its `.whl` file into `native\\dist\\` inside your SwarmAtlas folder.
+1. Download `swarmatlas_native-0.1.0-cp311-abi3-win_amd64.whl` from the [native-latest GitHub Release](https://github.com/MAKAKAIglitch/SwarmAtlas/releases/tag/native-latest).
+2. Copy the `.whl` file into `native\\dist\\` inside your SwarmAtlas folder.
 3. Close SwarmAtlas and double-click `install_native_wheel.bat`.
 4. Restart SwarmAtlas. The status bar will show whether the Rust core loaded.
 
-The artifact is built for Windows x64 and regular CPython 3.11 or newer, using PyO3's stable `abi3-py311` ABI. GitHub Actions retains the artifact for 14 days.
+The release is published by GitHub Actions only after the Rust build, Windows API smoke test, and Python tests pass. The wheel is built for Windows x64 and regular CPython 3.11 or newer using PyO3's stable `abi3-py311` ABI. The CI run also keeps a short-lived build artifact for diagnostics.
 
 **Build locally instead:**
 
@@ -142,10 +142,12 @@ Close SwarmAtlas and double-click `update_project.bat` in the project folder.
 - In a ZIP-extracted folder, it downloads the latest `main` archive from GitHub and safely overlays project files.
 - The updater preserves `.venv`, local MMDB files, SQLite databases, logs, and files outside the repository.
 - If a virtual environment already exists, it refreshes the editable package and optional GeoIP dependency.
-- If the Rust extension is already installed and the Rust toolchain is available, it also rebuilds the native extension. If the toolchain is missing, it preserves the existing binary and reports that it was not rebuilt.
+- If the Rust extension is already installed, the updater refreshes it too: it first tries a local release build when Rust is available; otherwise it downloads the tested `native-latest` Windows wheel from GitHub Releases.
+- Before installing a downloaded native wheel, the updater checks its SHA-256 manifest and expected stable-ABI filename. If download, checksum, or install fails, the existing extension is left in place and the Python compatibility collector remains available.
+- The Rust wheel is not installed automatically on machines that have never enabled the optional Rust extension.
 - It does not silently stash, reset, or rewrite local Git commits.
 
-An internet connection is required. After a successful update, start the app with `run_windows.bat`.
+An internet connection is required. The updater contacts GitHub only after you run it. Peer IPs, process names, PIDs and traffic statistics are not uploaded. After a successful update, start the app with `run_windows.bat`.
 
 ## GeoIP setup
 
