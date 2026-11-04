@@ -574,7 +574,7 @@ class NetworkWorker(QThread):
 
                 if now_mono - last_endpoint_scan >= ENDPOINT_SCAN_INTERVAL_SEC:
                     try:
-                        endpoints = collect_public_endpoints()
+                        endpoints, endpoint_stats = collect_public_endpoint_snapshot()
                         for endpoint in endpoints:
                             endpoint.update(locator.lookup(endpoint["ip"]))
                         store.update_destinations(endpoints, now_wall)
@@ -584,15 +584,23 @@ class NetworkWorker(QThread):
                         tcp_count = sum(
                             1 for endpoint in endpoints if endpoint.get("protocol") == "TCP"
                         )
-                        udp_count = sum(
-                            1 for endpoint in endpoints if endpoint.get("protocol") == "UDP"
-                        )
+                        udp_count = int(endpoint_stats.get("udp_public_peers", 0))
+                        udp_sockets = int(endpoint_stats.get("udp_local_sockets", 0))
                         connection_status = (
                             f"{len(endpoints)} public endpoints observed "
-                            f"(TCP: {tcp_count}, UDP: {udp_count}); "
+                            f"(TCP: {tcp_count}, UDP destinations: {udp_count}); "
+                            f"local UDP sockets: {udp_sockets}; "
                             f"{owner_count} with process owner "
                             f"(scan every {ENDPOINT_SCAN_INTERVAL_SEC:g} s)"
                         )
+                        if udp_count == 0 and udp_sockets:
+                            connection_status += (
+                                "; Windows exposes local UDP bindings, not remote "
+                                "addresses for unconnected UDP sockets"
+                            )
+                        udp_error = endpoint_stats.get("udp_binding_error")
+                        if udp_error:
+                            connection_status += f"; UDP table warning: {udp_error}"
                     except psutil.AccessDenied:
                         connection_status = "Socket table access restricted; interface totals still work"
                     except psutil.Error as exc:
