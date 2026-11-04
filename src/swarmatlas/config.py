@@ -27,6 +27,7 @@ class AppConfig:
     database_directory: str = ""
     geoip_provider: str = "dbip"
     geoip_api_key: str = ""
+    geoip_api_keys: dict[str, str] = field(default_factory=dict)
 
     def configured_geoip_databases(self) -> list[str]:
         """Return only user-selected databases, excluding the automatic DB-IP fallback."""
@@ -70,6 +71,22 @@ class AppConfig:
             legacy = str(raw.get("geoip_database", ""))
             if not databases and legacy:
                 databases = [legacy]
+            valid_providers = {"dbip", "ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "2ip"}
+            provider_value = str(raw.get("geoip_provider", "dbip"))
+            provider = provider_value if provider_value in valid_providers else "dbip"
+            raw_keys = raw.get("geoip_api_keys", {})
+            api_keys = {
+                str(key): str(value)
+                for key, value in raw_keys.items()
+                if isinstance(raw_keys, dict)
+                and str(key) in valid_providers - {"dbip"}
+                and isinstance(value, str)
+                and value.strip()
+            } if isinstance(raw_keys, dict) else {}
+            legacy_api_key = str(raw.get("geoip_api_key", ""))
+            # Migrate the previous single-key setting to the provider it belonged to.
+            if provider != "dbip" and legacy_api_key and not api_keys.get(provider):
+                api_keys[provider] = legacy_api_key
             return cls(
                 interface=str(raw.get("interface", "auto")),
                 geoip_database=legacy,
@@ -77,8 +94,9 @@ class AppConfig:
                 theme=theme if theme in {"system", "dark", "light"} else "system",
                 language=language if language in {"system", "ru", "en"} else "system",
                 database_directory=str(raw.get("database_directory", "")).strip(),
-                geoip_provider=str(raw.get("geoip_provider", "dbip")) if str(raw.get("geoip_provider", "dbip")) in {"dbip", "ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "2ip"} else "dbip",
-                geoip_api_key=str(raw.get("geoip_api_key", "")),
+                geoip_provider=provider,
+                geoip_api_key=api_keys.get(provider, ""),
+                geoip_api_keys=api_keys,
             )
         except (OSError, ValueError, TypeError):
             return cls()
@@ -86,6 +104,15 @@ class AppConfig:
     def save(self) -> None:
         self.geoip_databases = self.configured_geoip_databases()
         self.geoip_database = self.geoip_databases[0] if self.geoip_databases else ""
+        valid_keys = {"ip-api", "ipdata", "ipapi-is", "ipinfo-lite", "2ip"}
+        self.geoip_api_keys = {
+            str(provider): str(key)
+            for provider, key in self.geoip_api_keys.items()
+            if provider in valid_keys and isinstance(key, str) and key.strip()
+        }
+        if self.geoip_provider in valid_keys and self.geoip_api_key:
+            self.geoip_api_keys[self.geoip_provider] = self.geoip_api_key
+        self.geoip_api_key = self.geoip_api_keys.get(self.geoip_provider, "")
         path = app_data_dir() / "settings.json"
         temporary = path.with_suffix(".tmp")
         temporary.write_text(
