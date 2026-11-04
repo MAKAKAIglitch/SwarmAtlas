@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import platform
 import subprocess
@@ -9,6 +11,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence, TextIO
+from urllib.request import Request, urlopen
 
 
 MIN_PYTHON = (3, 11)
@@ -99,6 +102,105 @@ def stream_process(
     return return_code
 
 
+def _install_prebuilt_native_core(
+    venv_python: Path,
+    root: Path,
+    log: TextIO | None,
+) -> bool:
+    """Install the tested stable-ABI Rust wheel from this repository's latest release."""
+    if platform.system() != "Windows" or platform.machine().lower() not in {"amd64", "x86_64"}:
+        _emit(log, "[INFO] Prebuilt Rust core is currently published for Windows x64 only; using Python compatibility mode.")
+        return False
+
+    release_url = (
+        "https://api.github.com/repos/MAKAKAIglitch/SwarmAtlas/releases/tags/native-latest"
+    )
+    request = Request(
+        release_url,
+        headers={
+            "User-Agent": "SwarmAtlas/0.2 installer",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            release = json.loads(response.read(2 * 1024 * 1024 + 1).decode("utf-8"))
+        assets = release.get("assets", [])
+        wheels = [
+            item for item in assets
+            if str(item.get("name", "")).endswith("-cp311-abi3-win_amd64.whl")
+            and str(item.get("name", "")).startswith("swarmatlas_native-")
+        ]
+        manifests = [item for item in assets if item.get("name") == "wheel.sha256"]
+        if len(wheels) != 1 or len(manifests) != 1:
+            _emit(log, "[WARNING] No verified native wheel is published yet; using Python compatibility mode.")
+            return False
+
+        with urlopen(
+            Request(
+                str(wheels[0]["browser_download_url"]),
+                headers={"User-Agent": "SwarmAtlas/0.2 installer"},
+            ),
+            timeout=60,
+        ) as response:
+            wheel_bytes = response.read(64 * 1024 * 1024 + 1)
+        if len(wheel_bytes) > 64 * 1024 * 1024:
+            raise ValueError("native wheel exceeds 64 MiB")
+
+        with urlopen(
+            Request(
+                str(manifests[0]["browser_download_url"]),
+                headers={"User-Agent": "SwarmAtlas/0.2 installer"},
+            ),
+            timeout=20,
+        ) as response:
+            manifest = response.read(16 * 1024).decode("utf-8", errors="replace")
+
+        expected_hash = manifest.strip().split()[0].lower() if manifest.strip() else ""
+        actual_hash = hashlib.sha256(wheel_bytes).hexdigest()
+        if len(expected_hash) != 64 or expected_hash != actual_hash:
+            raise ValueError("native wheel SHA-256 verification failed")
+
+        with tempfile.TemporaryDirectory(prefix="swarmatlas-native-") as temporary:
+            wheel_path = Path(temporary) / str(wheels[0]["name"])
+            wheel_path.write_bytes(wheel_bytes)
+            _emit(log, "[INFO] Installing the verified prebuilt Rust monitoring core...")
+            code = stream_process(
+                [
+                    str(venv_python), "-m", "pip", "install",
+                    "--no-index", "--no-deps", "--force-reinstall", str(wheel_path),
+                ],
+                log,
+                root,
+            )
+            if code:
+                _emit(log, "[WARNING] Rust core installation failed; Python compatibility mode remains available.")
+                return False
+            code = stream_process(
+                [
+                    str(venv_python), "-c",
+                    "import _swarmatlas_native as n; "
+                    "print('Rust core:', n.__version__); "
+                    "print('Features:', ', '.join(n.capabilities())); "
+                    "assert 'tcp-owner-pid' in n.capabilities()",
+                ],
+                log,
+                root,
+            )
+            if code:
+                _emit(log, "[WARNING] Rust core verification failed; Python compatibility mode remains available.")
+                return False
+        _emit(log, "[INFO] Verified Rust monitoring core is ready.")
+        return True
+    except Exception as exc:
+        _emit(
+            log,
+            f"[WARNING] Could not install the prebuilt Rust core ({type(exc).__name__}: {exc}); "
+            "continuing with Python compatibility mode.",
+        )
+        return False
+
+
 def _run(log: TextIO | None, root: Path) -> int:
     _emit(log, f"[INFO] SwarmAtlas launcher started")
     _emit(log, f"[INFO] Launcher Python: {sys.version.split()[0]}")
@@ -173,6 +275,8 @@ def _run(log: TextIO | None, root: Path) -> int:
         if code:
             _emit(log, "[ERROR] Dependency installation failed.")
             return code
+
+    _install_prebuilt_native_core(venv_python, root, log)
 
     _emit(log, "[INFO] Starting the SwarmAtlas desktop application...")
     child_env = os.environ.copy()
