@@ -29,6 +29,7 @@ jobs:
         run: |
           $wheel = Get-ChildItem native/dist/*.whl | Select-Object -First 1
           if ($null -eq $wheel) { throw "Native wheel was not created." }
+          if ($wheel.Name -notmatch "-cp311-abi3-win_amd64\\.whl$") { throw "Unexpected native wheel ABI tag: $($wheel.Name)" }
           python -m pip install $wheel.FullName
       - name: Verify Windows process ownership APIs
         run: python -c "import _swarmatlas_native as n; print(n.capabilities()); print('TCP rows:', len(n.list_tcp_connections())); print('UDP bindings:', len(n.list_udp_bindings()))"
