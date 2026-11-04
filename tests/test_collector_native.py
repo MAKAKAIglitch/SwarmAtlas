@@ -72,7 +72,7 @@ def test_native_path_keeps_multiple_processes_connected_to_same_ip(monkeypatch) 
     assert {item["process_id"] for item in endpoints} == {101, 202}
 
 
-def test_native_scan_preserves_udp_visibility_when_tcp_is_busy(monkeypatch) -> None:
+def test_native_scan_counts_udp_without_reading_the_same_table_through_psutil(monkeypatch) -> None:
     monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
     requested_limits: list[int] = []
     monkeypatch.setattr(
@@ -90,20 +90,22 @@ def test_native_scan_preserves_udp_visibility_when_tcp_is_busy(monkeypatch) -> N
             ]
         ),
     )
-    monkeypatch.setattr(collector, "list_udp_bindings", lambda: [])
+    monkeypatch.setattr(collector, "count_udp_bindings", lambda: 11)
     monkeypatch.setattr(
         collector.psutil,
         "net_connections",
-        lambda kind="udp": [
-            FakeConnection("1.1.1.1", 443, "192.0.2.10", 53000, socket.SOCK_DGRAM, 77)
-        ] if kind == "udp" else [],
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("native UDP collection must not scan the table through psutil")
+        ),
     )
 
-    endpoints = collector.collect_public_endpoints(limit=2)
+    endpoints, stats = collector.collect_public_endpoint_snapshot(limit=2)
+
     assert requested_limits == [2]
     assert len(endpoints) == 2
-    assert {item["protocol"] for item in endpoints} == {"TCP", "UDP"}
-
+    assert {item["protocol"] for item in endpoints} == {"TCP"}
+    assert stats["udp_local_sockets"] == 11
+    assert stats["udp_public_peers"] == 0
 
 def test_python_fallback_interleaves_tcp_and_udp_when_limit_is_reached(monkeypatch) -> None:
     monkeypatch.setattr(collector, "NATIVE_AVAILABLE", False)
@@ -200,28 +202,13 @@ def test_native_empty_result_falls_back_to_psutil_tcp_table(monkeypatch) -> None
 def test_unconnected_udp_sockets_are_counted_without_inventing_remote_peers(monkeypatch) -> None:
     monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
     monkeypatch.setattr(collector, "list_tcp_connections", lambda limit=2000: [])
-    monkeypatch.setattr(
-        collector,
-        "list_udp_bindings",
-        lambda: [
-            {"local_ip": "0.0.0.0", "local_port": 53000, "process_id": 100},
-            {"local_ip": "0.0.0.0", "local_port": 53001, "process_id": 200},
-        ],
-    )
-    udp_sockets = [
-        SimpleNamespace(
-            raddr=(),
-            laddr=Address("0.0.0.0", 53000 + index),
-            type=socket.SOCK_DGRAM,
-            pid=100 + index * 100,
-            status="",
-        )
-        for index in range(2)
-    ]
+    monkeypatch.setattr(collector, "count_udp_bindings", lambda: 2)
     monkeypatch.setattr(
         collector.psutil,
         "net_connections",
-        lambda kind="inet": udp_sockets if kind == "udp" else [],
+        lambda kind="tcp": [] if kind == "tcp" else (_ for _ in ()).throw(
+            AssertionError("UDP table must not be scanned a second time")
+        ),
     )
 
     endpoints, stats = collector.collect_public_endpoint_snapshot()
