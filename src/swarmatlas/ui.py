@@ -24,7 +24,7 @@ from PySide6.QtNetwork import (
     QNetworkRequest,
 )
 
-from .collector import NetworkWorker, available_interfaces
+from .collector import NetworkWorker, available_interfaces, should_use_power_saver
 from .config import AppConfig, app_data_dir
 from .i18n import tr, translate_status
 from .map_geometry import build_boundary_paths
@@ -1393,7 +1393,7 @@ class MainWindow(QMainWindow):
             and application.applicationState() == Qt.ApplicationState.ApplicationActive
         )
         worker.set_power_saver_mode(
-            collector.should_use_power_saver(
+            should_use_power_saver(
                 application_active=application_active,
                 minimized=self.isMinimized(),
             )
