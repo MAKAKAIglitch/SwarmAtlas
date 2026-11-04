@@ -261,9 +261,10 @@ class GeoIPProviderDialog(QDialog):
             self.api_keys[self._active_provider] = self.api_key_input.text().strip()
             self._active_provider = provider
             self.api_key_input.setText(self.api_keys.get(provider, ""))
-        self.key_label.setVisible(provider != "dbip")
-        self.api_key_input.setVisible(provider != "dbip")
-        self.api_key_input.setEnabled(provider != "dbip")
+        accepts_token = provider in {"ipapi-is", "ipinfo-lite", "2ip"}
+        self.key_label.setVisible(accepts_token)
+        self.api_key_input.setVisible(accepts_token)
+        self.api_key_input.setEnabled(accepts_token)
         if provider == "dbip":
             message_key = "provider_note_dbip"
         else:
