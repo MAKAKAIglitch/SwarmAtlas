@@ -28,13 +28,13 @@ def test_store_accumulates_interface_counters(tmp_path: Path) -> None:
     store.close()
 
 
-def test_destination_history_is_pruned_after_30_days(tmp_path: Path) -> None:
+def test_destination_history_is_pruned_after_five_years(tmp_path: Path) -> None:
     store = Store(tmp_path / "retention.sqlite3")
     store.update_destinations(
         [{"ip": "203.0.113.10", "port": 443, "protocol": "TCP"}],
         timestamp=1.0,
     )
-    store.update_destinations([], timestamp=1.0 + 31 * 24 * 60 * 60)
+    store.update_destinations([], timestamp=1.0 + 5 * 365 * 24 * 60 * 60 + 2)
     count = store._db.execute("SELECT COUNT(*) FROM destinations").fetchone()[0]
     assert count == 0
     store.close()
@@ -178,4 +178,48 @@ def test_legacy_destination_schema_migrates_without_losing_history(tmp_path: Pat
     updated = store.summary("Ethernet", now=11.0)["active_endpoints"]
     assert len(updated) == 1
     assert updated[0]["process_id"] == 101
+    store.close()
+
+
+
+def test_repeated_connections_reuse_one_destination_history_row(tmp_path: Path) -> None:
+    store = Store(tmp_path / "deduplicate.sqlite3")
+    store.update_destinations(
+        [{
+            "ip": "8.8.8.8", "port": 443, "protocol": "TCP",
+            "process_id": 101, "local_port": 51001, "process_name": "browser.exe",
+        }],
+        timestamp=100.0,
+    )
+    store.update_destinations(
+        [{
+            "ip": "8.8.8.8", "port": 443, "protocol": "TCP",
+            "process_id": 101, "local_port": 51002, "process_name": "browser.exe",
+        }],
+        timestamp=110.0,
+    )
+    rows = store.summary("Ethernet", now=110.0)["active_endpoints"]
+    assert len(rows) == 1
+    assert rows[0]["local_port"] == 51002
+    store.close()
+
+
+def test_five_year_history_is_compacted_to_hourly_rows(tmp_path: Path) -> None:
+    from swarmatlas.storage import HISTORY_RAW_RETENTION_SEC
+
+    store = Store(tmp_path / "long-history.sqlite3")
+    old_time = 100.0
+    store.add_sample(old_time, 125.0, 350.0)
+    current = old_time + HISTORY_RAW_RETENTION_SEC + 3600
+    store._compact_history(current)
+
+    raw_count = store._db.execute("SELECT COUNT(*) FROM traffic_samples").fetchone()[0]
+    hourly_count = store._db.execute("SELECT COUNT(*) FROM traffic_hourly").fetchone()[0]
+    assert raw_count == 0
+    assert hourly_count == 1
+
+    history = store.history(5 * 365 * 24 * 60 * 60, now=current)
+    assert len(history) == 1
+    assert history[0]["upload_bps"] == 125.0
+    assert history[0]["download_bps"] == 350.0
     store.close()
