@@ -43,9 +43,12 @@ if not exist "%MATURIN%" (
     goto :failed
 )
 
+set "VIRTUAL_ENV=%~dp0.venv"
+set "PATH=%VIRTUAL_ENV%\Scripts;%PATH%"
+
 echo [SwarmAtlas Rust] Compiling the read-only Windows network core...
 pushd "%~dp0native"
-"%MATURIN%" develop --release --python "%VENV_PY%"
+"%MATURIN%" develop --release
 set "BUILD_EXIT=%ERRORLEVEL%"
 popd
 
