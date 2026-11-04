@@ -67,15 +67,18 @@ def list_tcp_connections(limit: int = 2000) -> list[dict[str, Any]]:
             continue
         remote_ip, remote_port, protocol, process_id, local_port, state = row
         address_text = str(remote_ip)
-        try:
-            address = ipaddress.ip_address(address_text)
-            if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-                address = address.ipv4_mapped
-                address_text = str(address)
-        except ValueError:
-            continue
-        if 'tcp-public-endpoints' not in NATIVE_CAPABILITIES and not address.is_global:
-            continue
+        if "tcp-public-endpoints" not in NATIVE_CAPABILITIES:
+            # Older wheels leave address filtering to Python. Current Rust
+            # wheels already validate public ranges and normalize mapped IPv6.
+            try:
+                address = ipaddress.ip_address(address_text)
+                if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+                    address = address.ipv4_mapped
+                    address_text = str(address)
+            except ValueError:
+                continue
+            if not address.is_global:
+                continue
 
         try:
             remote_port = int(remote_port)
