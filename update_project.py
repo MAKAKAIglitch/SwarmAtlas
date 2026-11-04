@@ -417,12 +417,14 @@ def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
                 [
                     str(venv_python),
                     "-c",
-                    "import _swarmatlas_native as n; "
-                    "caps = set(n.capabilities()); "
-                    NATIVE_CAPABILITY_ASSERTION + "; "
-                    "assert callable(n.list_tcp_connections); "
-                    "assert callable(n.list_udp_bindings); "
-                    "print('Installed Rust core:', n.__version__)",
+                    (
+                        "import _swarmatlas_native as n; "
+                        "caps = set(n.capabilities()); "
+                        + NATIVE_CAPABILITY_ASSERTION
+                        + "; assert callable(n.list_tcp_connections); "
+                        "assert callable(n.list_udp_bindings); "
+                        "print('Installed Rust core:', n.__version__)"
+                    ),
                 ],
                 cwd=str(root),
                 text=True,
