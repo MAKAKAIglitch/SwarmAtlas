@@ -18,9 +18,13 @@ def test_native_extension_reports_read_only_windows_capabilities() -> None:
 def test_native_connection_tables_return_valid_rows() -> None:
     tcp_rows = native.list_tcp_connections()
     udp_rows = native.list_udp_bindings()
+    bounded_tcp_rows = native.list_tcp_connections(10)
+    bounded_udp_rows = native.list_udp_bindings(10)
 
     assert isinstance(tcp_rows, list)
     assert isinstance(udp_rows, list)
+    assert len(bounded_tcp_rows) <= 10
+    assert len(bounded_udp_rows) <= 10
 
     for row in tcp_rows:
         assert len(row) == 6
