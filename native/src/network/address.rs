@@ -45,7 +45,21 @@ fn is_public_ipv6(address: Ipv6Addr) -> bool {
     // unspecified, loopback, link-local, unique-local and multicast ranges.
     let global_unicast = segments[0] & 0xe000 == 0x2000;
     let documentation = segments[0] == 0x2001 && segments[1] == 0x0db8;
-    global_unicast && !documentation
+    let teredo = segments[0] == 0x2001 && segments[1] == 0x0000;
+    let benchmarking = segments[0] == 0x2001
+        && segments[1] == 0x0002
+        && segments[2] == 0x0000;
+    let orchid = segments[0] == 0x2001 && segments[1] & 0xfff0 == 0x0010;
+    let six_to_four = segments[0] == 0x2002;
+    let documentation_v2 = segments[0] == 0x3fff && segments[1] & 0xf000 == 0;
+
+    global_unicast
+        && !documentation
+        && !teredo
+        && !benchmarking
+        && !orchid
+        && !six_to_four
+        && !documentation_v2
 }
 
 pub(crate) fn canonical_ip(address: IpAddr) -> IpAddr {
@@ -97,6 +111,12 @@ mod tests {
         assert!(!is_public_ip("fc00::1".parse().unwrap()));
         assert!(!is_public_ip("ff02::1".parse().unwrap()));
         assert!(!is_public_ip("2001:db8::1".parse().unwrap()));
+        assert!(!is_public_ip("2001::1".parse().unwrap()));
+        assert!(!is_public_ip("2001:2::1".parse().unwrap()));
+        assert!(!is_public_ip("2001:10::1".parse().unwrap()));
+        assert!(!is_public_ip("2002::1".parse().unwrap()));
+        assert!(!is_public_ip("3fff::1".parse().unwrap()));
+        assert!(is_public_ip("2001:1::1".parse().unwrap()));
     }
 
     #[test]
