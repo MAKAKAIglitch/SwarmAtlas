@@ -1,21 +1,30 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
+import math
 import shutil
 import sqlite3
+import time
 from typing import Any
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, Signal, Slot
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
     QTableWidgetItem, QToolTip, QVBoxLayout, QWidget, QLineEdit,
 )
+from PySide6.QtNetwork import (
+    QNetworkAccessManager,
+    QNetworkDiskCache,
+    QNetworkReply,
+    QNetworkRequest,
+)
 
 from .collector import NetworkWorker, available_interfaces
-from .config import AppConfig
+from .config import AppConfig, app_data_dir
 from .i18n import tr, translate_status
 from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
 from .utils import format_bytes, format_rate
@@ -343,13 +352,20 @@ class TrafficChart(QWidget):
 
 
 class WorldMap(QWidget):
-    """Interactive offline world map with local country and first-level region borders."""
+    """OSM-backed world map, limited to country, region and city-scale detail."""
 
     location_selected = Signal(dict)
+    TILE_MIN_ZOOM = 2
+    TILE_MAX_ZOOM = 8
+    TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    TILE_USER_AGENT = b"SwarmAtlas/0.2"
+    MAX_MEMORY_TILES = 160
+    MAX_DISK_CACHE_BYTES = 128 * 1024 * 1024
+    MERCATOR_MAX_LAT = 85.0511287798066
 
     def __init__(self, palette: dict[str, str], empty_text: str):
         super().__init__()
-        self.setMinimumHeight(275)
+        self.setMinimumHeight(300)
         self.setMouseTracking(True)
         self.palette_colors = palette
         self.empty_text = empty_text
@@ -363,6 +379,20 @@ class WorldMap(QWidget):
         self._drag_origin = QPointF(0.0, 0.0)
         self._dragged = False
         self._hovered_index: int | None = None
+
+        # Qt's disk cache honours the tile server's HTTP cache headers and
+        # conditional requests. Only tiles visible in the current viewport
+        # are requested; there is no background or bulk tile download.
+        cache_directory = app_data_dir() / "osm-tile-cache"
+        cache_directory.mkdir(parents=True, exist_ok=True)
+        self._tile_disk_cache = QNetworkDiskCache(self)
+        self._tile_disk_cache.setCacheDirectory(str(cache_directory))
+        self._tile_disk_cache.setMaximumCacheSize(self.MAX_DISK_CACHE_BYTES)
+        self._tile_manager = QNetworkAccessManager(self)
+        self._tile_manager.setCache(self._tile_disk_cache)
+        self._tile_pixmaps: OrderedDict[tuple[int, int, int], QPixmap] = OrderedDict()
+        self._tile_pending: set[tuple[int, int, int]] = set()
+        self._tile_retry_after: dict[tuple[int, int, int], float] = {}
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
@@ -385,9 +415,21 @@ class WorldMap(QWidget):
         self._hovered_index = None
         self.update()
 
-    @staticmethod
-    def _normalized_point(longitude: float, latitude: float) -> QPointF:
-        return QPointF((longitude + 180.0) / 360.0, (90.0 - latitude) / 180.0)
+    @classmethod
+    def _normalized_point(cls, longitude: float, latitude: float) -> QPointF:
+        """Project WGS84 coordinates to the same Web Mercator world as OSM tiles."""
+        latitude = max(-cls.MERCATOR_MAX_LAT, min(cls.MERCATOR_MAX_LAT, latitude))
+        radians = math.radians(latitude)
+        x = (longitude + 180.0) / 360.0
+        y = (1.0 - math.asinh(math.tan(radians)) / math.pi) / 2.0
+        return QPointF(x, y)
+
+    @classmethod
+    def _tile_zoom_for_scale(cls, scale: float) -> int:
+        """Start at a world view and stop at z8 (city/region, not street/building)."""
+        safe_scale = max(1.0, float(scale))
+        level = cls.TILE_MIN_ZOOM + int(math.floor(math.log2(safe_scale)))
+        return max(cls.TILE_MIN_ZOOM, min(cls.TILE_MAX_ZOOM, level))
 
     def set_boundaries(
         self,
@@ -423,31 +465,32 @@ class WorldMap(QWidget):
 
     def copy_boundaries_from(self, other: "WorldMap") -> None:
         self.set_boundary_paths(other.country_path, other.region_path)
+        self._tile_pixmaps = OrderedDict(other._tile_pixmaps)
 
     def _map_rect(self) -> QRectF:
-        area = QRectF(self.rect()).adjusted(12, 8, -12, -8)
-        width = min(area.width(), area.height() * 2.0)
-        height = width / 2.0
+        # OSM's Web Mercator tile matrix is square. Keep the projection square
+        # rather than stretching the map into an incorrect 2:1 equirectangular view.
+        area = QRectF(self.rect()).adjusted(8, 6, -8, -6)
+        size = min(area.width(), area.height())
         return QRectF(
-            area.center().x() - width / 2.0,
-            area.center().y() - height / 2.0,
-            width,
-            height,
+            area.center().x() - size / 2.0,
+            area.center().y() - size / 2.0,
+            size,
+            size,
         )
 
     def _screen_point(self, longitude: float, latitude: float) -> QPointF:
         rect = self._map_rect()
         normalized = self._normalized_point(longitude, latitude)
+        world_size = rect.width() * self._zoom
         return QPointF(
-            rect.center().x() + self._pan.x()
-            + (normalized.x() - 0.5) * rect.width() * self._zoom,
-            rect.center().y() + self._pan.y()
-            + (normalized.y() - 0.5) * rect.height() * self._zoom,
+            rect.center().x() + self._pan.x() + (normalized.x() - 0.5) * world_size,
+            rect.center().y() + self._pan.y() + (normalized.y() - 0.5) * world_size,
         )
 
     def _zoom_at(self, position: QPointF, factor: float) -> None:
         old_zoom = self._zoom
-        new_zoom = max(1.0, min(16.0, old_zoom * factor))
+        new_zoom = max(1.0, min(64.0, old_zoom * factor))
         if abs(new_zoom - old_zoom) < 0.0001:
             return
 
@@ -472,7 +515,151 @@ class WorldMap(QWidget):
         self._pan = QPointF(0.0, 0.0)
         self.update()
 
+    def _request_tile(self, zoom: int, x: int, y: int) -> None:
+        key = (zoom, x, y)
+        if key in self._tile_pixmaps or key in self._tile_pending:
+            return
+        if self._tile_retry_after.get(key, 0.0) > time.monotonic():
+            return
+
+        request = QNetworkRequest(
+            QUrl(self.TILE_URL.format(z=zoom, x=x, y=y))
+        )
+        request.setRawHeader(b"User-Agent", self.TILE_USER_AGENT)
+        request.setRawHeader(b"Accept", b"image/png")
+        reply = self._tile_manager.get(request)
+        self._tile_pending.add(key)
+        reply.finished.connect(
+            lambda tile_key=key, network_reply=reply:
+                self._tile_request_finished(tile_key, network_reply)
+        )
+
+    def _tile_request_finished(self, key: tuple[int, int, int], reply: QNetworkReply) -> None:
+        self._tile_pending.discard(key)
+        try:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                payload = bytes(reply.readAll())
+                pixmap = QPixmap()
+                if payload and pixmap.loadFromData(payload, "PNG"):
+                    self._tile_pixmaps[key] = pixmap
+                    self._tile_pixmaps.move_to_end(key)
+                    while len(self._tile_pixmaps) > self.MAX_MEMORY_TILES:
+                        self._tile_pixmaps.popitem(last=False)
+                    self._tile_retry_after.pop(key, None)
+                else:
+                    self._tile_retry_after[key] = time.monotonic() + 300.0
+            else:
+                # Back off on timeouts, offline mode, rate limits and server errors.
+                self._tile_retry_after[key] = time.monotonic() + 120.0
+        finally:
+            reply.deleteLater()
+            self.update()
+
+    def _draw_fallback_land(self, painter: QPainter, map_rect: QRectF) -> None:
+        """Keep a locally available map visible while OSM tiles are loading/offline."""
+        painter.save()
+        painter.setClipRect(map_rect)
+        painter.translate(
+            map_rect.center().x() + self._pan.x(),
+            map_rect.center().y() + self._pan.y(),
+        )
+        world_size = map_rect.width() * self._zoom
+        painter.scale(world_size, world_size)
+        painter.translate(-0.5, -0.5)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self.palette_colors["land"]))
+        if self._has_boundaries:
+            painter.drawPath(self.country_path)
+        else:
+            continents = [
+                [(-168, 70), (-145, 72), (-125, 55), (-110, 50), (-95, 20), (-80, 8), (-78, 28), (-60, 48), (-82, 60), (-105, 72), (-135, 73)],
+                [(-82, 12), (-65, 8), (-50, -5), (-45, -25), (-58, -55), (-72, -35), (-78, -5)],
+                [(-12, 72), (35, 70), (70, 55), (105, 58), (145, 48), (165, 62), (178, 48), (150, 20), (120, 5), (100, 10), (80, -5), (55, 10), (42, 32), (20, 35), (5, 55)],
+                [(-18, 35), (12, 37), (38, 20), (48, 0), (35, -35), (18, -35), (5, -5), (-10, 10)],
+                [(112, -12), (153, -10), (155, -40), (132, -45), (114, -30)],
+                [(-52, 82), (-25, 80), (-38, 60)],
+            ]
+            for polygon in continents:
+                path = QPainterPath()
+                for index, (longitude, latitude) in enumerate(polygon):
+                    point = self._normalized_point(longitude, latitude)
+                    if index == 0:
+                        path.moveTo(point)
+                    else:
+                        path.lineTo(point)
+                path.closeSubpath()
+                painter.drawPath(path)
+        painter.restore()
+
+    def _draw_osm_tiles(self, painter: QPainter, area: QRectF, map_rect: QRectF) -> None:
+        zoom = self._tile_zoom_for_scale(self._zoom)
+        tiles_per_axis = 1 << zoom
+        world_size = map_rect.width() * self._zoom
+        tile_size = world_size / tiles_per_axis
+        origin_x = map_rect.center().x() + self._pan.x() - world_size / 2.0
+        origin_y = map_rect.center().y() + self._pan.y() - world_size / 2.0
+        visible = map_rect.intersected(area)
+        if visible.isEmpty() or tile_size <= 0:
+            return
+
+        first_x = math.floor((visible.left() - origin_x) / tile_size)
+        last_x = math.ceil((visible.right() - origin_x) / tile_size) - 1
+        first_y = math.floor((visible.top() - origin_y) / tile_size)
+        last_y = math.ceil((visible.bottom() - origin_y) / tile_size) - 1
+
+        painter.save()
+        painter.setClipRect(visible)
+        for tile_y in range(max(0, first_y), min(tiles_per_axis - 1, last_y) + 1):
+            for world_tile_x in range(first_x, last_x + 1):
+                tile_x = world_tile_x % tiles_per_axis
+                key = (zoom, tile_x, tile_y)
+                target = QRectF(
+                    origin_x + world_tile_x * tile_size,
+                    origin_y + tile_y * tile_size,
+                    tile_size,
+                    tile_size,
+                )
+                pixmap = self._tile_pixmaps.get(key)
+                if pixmap is not None:
+                    self._tile_pixmaps.move_to_end(key)
+                    painter.drawPixmap(
+                        target,
+                        pixmap,
+                        QRectF(0.0, 0.0, float(pixmap.width()), float(pixmap.height())),
+                    )
+                else:
+                    self._request_tile(zoom, tile_x, tile_y)
+        painter.restore()
+
+    def _draw_administrative_boundaries(self, painter: QPainter, map_rect: QRectF) -> None:
+        if not self._has_boundaries:
+            return
+        painter.save()
+        painter.setClipRect(map_rect)
+        painter.translate(
+            map_rect.center().x() + self._pan.x(),
+            map_rect.center().y() + self._pan.y(),
+        )
+        world_size = map_rect.width() * self._zoom
+        painter.scale(world_size, world_size)
+        painter.translate(-0.5, -0.5)
+
+        country_pen = QPen(QColor(self.palette_colors["muted"]), 0.8)
+        country_pen.setCosmetic(True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(country_pen)
+        painter.drawPath(self.country_path)
+
+        region_pen = QPen(QColor(self.palette_colors["line"]), 0.55)
+        region_pen.setCosmetic(True)
+        painter.setPen(region_pen)
+        painter.drawPath(self.region_path)
+        painter.restore()
+
     def _nearest_location(self, position: QPointF) -> int | None:
+        if not self._map_rect().contains(position):
+            return None
         nearest_index: int | None = None
         nearest_distance = 13.0
         for index, item in enumerate(self.locations):
@@ -504,71 +691,16 @@ class WorldMap(QWidget):
         painter.fillRect(area, QColor(colors["surface_alt"]))
 
         map_rect = self._map_rect()
+        self._draw_fallback_land(painter, map_rect)
+        self._draw_osm_tiles(painter, area, map_rect)
+        self._draw_administrative_boundaries(painter, map_rect)
+
         painter.save()
-        painter.setClipRect(area)
-        painter.translate(
-            map_rect.center().x() + self._pan.x(),
-            map_rect.center().y() + self._pan.y(),
-        )
-        painter.scale(
-            map_rect.width() * self._zoom,
-            map_rect.height() * self._zoom,
-        )
-        painter.translate(-0.5, -0.5)
-
-        if self._has_boundaries:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(colors["land"]))
-            painter.drawPath(self.country_path)
-
-            country_pen = QPen(QColor(colors["muted"]), 0.8)
-            country_pen.setCosmetic(True)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(country_pen)
-            painter.drawPath(self.country_path)
-
-            region_pen = QPen(QColor(colors["line"]), 0.55)
-            region_pen.setCosmetic(True)
-            painter.setPen(region_pen)
-            painter.drawPath(self.region_path)
-        else:
-            continents = [
-                [(-168, 70), (-145, 72), (-125, 55), (-110, 50), (-95, 20), (-80, 8), (-78, 28), (-60, 48), (-82, 60), (-105, 72), (-135, 73)],
-                [(-82, 12), (-65, 8), (-50, -5), (-45, -25), (-58, -55), (-72, -35), (-78, -5)],
-                [(-12, 72), (35, 70), (70, 55), (105, 58), (145, 48), (165, 62), (178, 48), (150, 20), (120, 5), (100, 10), (80, -5), (55, 10), (42, 32), (20, 35), (5, 55)],
-                [(-18, 35), (12, 37), (38, 20), (48, 0), (35, -35), (18, -35), (5, -5), (-10, 10)],
-                [(112, -12), (153, -10), (155, -40), (132, -45), (114, -30)],
-                [(-52, 82), (-25, 80), (-38, 60)],
-            ]
-            painter.setPen(QPen(QColor(colors["line"]), 0.001))
-            painter.setBrush(QColor(colors["land"]))
-            for polygon in continents:
-                path = QPainterPath()
-                for index, (longitude, latitude) in enumerate(polygon):
-                    point = self._normalized_point(longitude, latitude)
-                    if index == 0:
-                        path.moveTo(point)
-                    else:
-                        path.lineTo(point)
-                path.closeSubpath()
-                painter.drawPath(path)
-
-        grid_pen = QPen(QColor(colors["grid"]), 0.8)
-        grid_pen.setCosmetic(True)
-        painter.setPen(grid_pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        for longitude in (-120, -60, 0, 60, 120):
-            x = (longitude + 180.0) / 360.0
-            painter.drawLine(QPointF(x, 0.0), QPointF(x, 1.0))
-        for latitude in (-60, -30, 0, 30, 60):
-            y = (90.0 - latitude) / 180.0
-            painter.drawLine(QPointF(0.0, y), QPointF(1.0, y))
-        painter.restore()
-
+        painter.setClipRect(map_rect)
         if not self.locations:
             painter.setPen(QColor(colors["muted"]))
             painter.drawText(
-                area.adjusted(0, area.height() - 32, 0, 0),
+                map_rect.adjusted(8, 8, -8, -8),
                 Qt.AlignmentFlag.AlignCenter,
                 self.empty_text,
             )
@@ -578,7 +710,7 @@ class WorldMap(QWidget):
                     float(item["longitude"]),
                     float(item["latitude"]),
                 )
-                if not QRectF(area).adjusted(-8, -8, 8, 8).contains(point):
+                if not map_rect.adjusted(-8, -8, 8, 8).contains(point):
                     continue
                 painter.setPen(QPen(QColor(colors["accent"]), 1))
                 painter.setBrush(QColor(colors["accent_light"]))
@@ -588,10 +720,11 @@ class WorldMap(QWidget):
         if self._zoom > 1.01:
             painter.setPen(QColor(colors["muted"]))
             painter.drawText(
-                area.adjusted(0, 6, -8, 0),
+                map_rect.adjusted(0, 6, -8, 0),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
-                f"{self._zoom:.1f}×",
+                f"OSM z{self._tile_zoom_for_scale(self._zoom)}/{self.TILE_MAX_ZOOM}",
             )
+        painter.restore()
 
     def wheelEvent(self, event: Any) -> None:
         delta = event.angleDelta().y()
