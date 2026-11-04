@@ -360,6 +360,9 @@ class WorldMap(QWidget):
     TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     TILE_USER_AGENT = b"SwarmAtlas/0.2"
     MAX_MEMORY_TILES = 160
+    MAX_PENDING_TILES = 1
+    MAX_FAILED_TILE_ENTRIES = 512
+    MAX_TILE_RESPONSE_BYTES = 1024 * 1024
     MAX_DISK_CACHE_BYTES = 128 * 1024 * 1024
     MERCATOR_MAX_LAT = 85.0511287798066
 
@@ -526,6 +529,9 @@ class WorldMap(QWidget):
             return
         if self._tile_retry_after.get(key, 0.0) > time.monotonic():
             return
+        # Keep the public OSM tile service load low, even during rapid panning.
+        if len(self._tile_pending) >= self.MAX_PENDING_TILES:
+            return
 
         request = QNetworkRequest(
             QUrl(self.TILE_URL.format(z=zoom, x=x, y=y))
@@ -534,6 +540,11 @@ class WorldMap(QWidget):
         request.setRawHeader(b"Accept", b"image/png")
         reply = self._tile_manager.get(request)
         self._tile_pending.add(key)
+        reply.downloadProgress.connect(
+            lambda received, _total, network_reply=reply:
+                network_reply.abort()
+                if received > self.MAX_TILE_RESPONSE_BYTES else None
+        )
         reply.finished.connect(
             lambda tile_key=key, network_reply=reply:
                 self._tile_request_finished(tile_key, network_reply)
@@ -545,7 +556,11 @@ class WorldMap(QWidget):
             if reply.error() == QNetworkReply.NetworkError.NoError:
                 payload = bytes(reply.readAll())
                 pixmap = QPixmap()
-                if payload and pixmap.loadFromData(payload, "PNG"):
+                if (
+                    payload
+                    and len(payload) <= self.MAX_TILE_RESPONSE_BYTES
+                    and pixmap.loadFromData(payload, "PNG")
+                ):
                     self._tile_pixmaps[key] = pixmap
                     self._tile_pixmaps.move_to_end(key)
                     while len(self._tile_pixmaps) > self.MAX_MEMORY_TILES:
@@ -553,6 +568,9 @@ class WorldMap(QWidget):
                     self._tile_retry_after.pop(key, None)
                 else:
                     self._tile_retry_after[key] = time.monotonic() + 300.0
+                    if len(self._tile_retry_after) > self.MAX_FAILED_TILE_ENTRIES:
+                        oldest = next(iter(self._tile_retry_after))
+                        self._tile_retry_after.pop(oldest, None)
             else:
                 # Back off on timeouts, offline mode, rate limits and server errors.
                 self._tile_retry_after[key] = time.monotonic() + 120.0
