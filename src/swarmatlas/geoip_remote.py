@@ -126,7 +126,10 @@ class RemoteGeoLocator:
         self._stop = threading.Event()
         self._usage_day = datetime.now(timezone.utc).date().isoformat()
         self._usage_count = 0
+        self._usage_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        self._monthly_usage_count = 0
         self._quota_reached = False
+        self._monthly_quota_reached = False
         self._usage_path = app_data_dir() / "geoip_provider_usage.json"
         self._load_usage()
         self._thread: threading.Thread | None = None
@@ -167,6 +170,14 @@ class RemoteGeoLocator:
                 if isinstance(counts, dict):
                     self._usage_count = max(0, int(counts.get(self.provider, 0)))
             self._usage_day = today
+            month = datetime.now(timezone.utc).strftime("%Y-%m")
+            if isinstance(raw, dict) and raw.get("month") == month:
+                monthly_counts = raw.get("monthly_counts", {})
+                if isinstance(monthly_counts, dict):
+                    self._monthly_usage_count = max(
+                        0, int(monthly_counts.get(self.provider, 0))
+                    )
+            self._usage_month = month
         except (OSError, ValueError, TypeError):
             self._usage_day = datetime.now(timezone.utc).date().isoformat()
             self._usage_count = 0
@@ -174,21 +185,36 @@ class RemoteGeoLocator:
     def _save_usage(self) -> None:
         today = datetime.now(timezone.utc).date().isoformat()
         counts: dict[str, int] = {}
+        monthly_counts: dict[str, int] = {}
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
         try:
             raw = json.loads(self._usage_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict) and raw.get("date") == today and isinstance(raw.get("counts"), dict):
-                counts = {str(k): max(0, int(v)) for k, v in raw["counts"].items()}
+            if isinstance(raw, dict):
+                if raw.get("date") == today and isinstance(raw.get("counts"), dict):
+                    counts = {str(k): max(0, int(v)) for k, v in raw["counts"].items()}
+                if raw.get("month") == month and isinstance(raw.get("monthly_counts"), dict):
+                    monthly_counts = {
+                        str(k): max(0, int(v))
+                        for k, v in raw["monthly_counts"].items()
+                    }
         except (OSError, ValueError, TypeError):
             pass
         counts[self.provider] = self._usage_count
+        monthly_counts[self.provider] = self._monthly_usage_count
         self._usage_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self._usage_path.with_suffix(".tmp")
         temporary.write_text(
-            json.dumps({"date": today, "counts": counts}, indent=2),
+            json.dumps({
+                "date": today,
+                "counts": counts,
+                "month": month,
+                "monthly_counts": monthly_counts,
+            }, indent=2),
             encoding="utf-8",
         )
         temporary.replace(self._usage_path)
         self._usage_day = today
+        self._usage_month = month
 
     def _daily_limit(self) -> int | None:
         if self.provider == "ipdata":
@@ -196,6 +222,10 @@ class RemoteGeoLocator:
         if self.provider == "ipapi-is":
             return 950 if self.api_key else 25
         return None
+
+    def _monthly_limit(self) -> int | None:
+        # Leave headroom below the published 10,000 monthly free 2ip requests.
+        return 9500 if self.provider == "2ip" else None
 
     def _minimum_interval(self) -> float:
         return {
@@ -219,11 +249,22 @@ class RemoteGeoLocator:
                 self._usage_day = today
                 self._usage_count = 0
                 self._quota_reached = False
+            month = datetime.now(timezone.utc).strftime("%Y-%m")
+            if self._usage_month != month:
+                self._usage_month = month
+                self._monthly_usage_count = 0
+                self._monthly_quota_reached = False
             cached = self._cache.get(ip)
             if cached is not None:
                 self._cache.move_to_end(ip)
                 return dict(cached)
-            if ip not in self._pending and self._thread is not None and not self._stop.is_set() and not self._quota_reached:
+            if (
+                ip not in self._pending
+                and self._thread is not None
+                and not self._stop.is_set()
+                and not self._quota_reached
+                and not self._monthly_quota_reached
+            ):
                 try:
                     self._queue.put_nowait(ip)
                     self._pending.add(ip)
@@ -282,16 +323,28 @@ class RemoteGeoLocator:
                 delay = max(0.0, next_request_at - now)
                 if delay and self._stop.wait(delay):
                     break
-                if self._usage_day != datetime.now(timezone.utc).date().isoformat():
+                today = datetime.now(timezone.utc).date().isoformat()
+                month = datetime.now(timezone.utc).strftime("%Y-%m")
+                if self._usage_day != today:
                     self._usage_count = 0
                     self._quota_reached = False
-                    self._usage_day = datetime.now(timezone.utc).date().isoformat()
+                    self._usage_day = today
+                if self._usage_month != month:
+                    self._monthly_usage_count = 0
+                    self._monthly_quota_reached = False
+                    self._usage_month = month
                 daily_limit = self._daily_limit()
                 if daily_limit is not None and self._usage_count >= daily_limit:
                     self._quota_reached = True
                     self.status = f"{PROVIDER_NAMES[self.provider]} daily free lookup budget reached ({daily_limit})"
                     continue
+                monthly_limit = self._monthly_limit()
+                if monthly_limit is not None and self._monthly_usage_count >= monthly_limit:
+                    self._monthly_quota_reached = True
+                    self.status = f"{PROVIDER_NAMES[self.provider]} monthly free lookup budget reached ({monthly_limit})"
+                    continue
                 self._usage_count += 1
+                self._monthly_usage_count += 1
                 try:
                     self._save_usage()
                 except OSError:
