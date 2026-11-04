@@ -203,7 +203,11 @@ class RemoteGeoLocator:
         if self.provider == "ip-api":
             return "IP-API.com: free non-commercial HTTP service; limit 45 requests/minute"
         if self.provider == "ipdata":
-            return "ipdata.co: free city lookup allowance up to 1,000/day; attribution required"
+            return (
+                "ipdata.free: 1,000 city-level lookups/day per public caller IP; "
+                "country/ASN continues after the limit; attribution required; "
+                "SwarmAtlas caps at 950 lookups/day per installation"
+            )
         if self.provider == "ipapi-is":
             limit = "1,000/day with a key" if self.api_key else "30/day without a key"
             return f"ipapi.is: free tier · {limit}"
