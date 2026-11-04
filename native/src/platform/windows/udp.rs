@@ -1,4 +1,4 @@
-use super::api::{decode_port, query_udp_rows, AF_INET, AF_INET6, UDP_TABLE_OWNER_PID};
+use super::api::{decode_port, query_udp_rows, query_udp_rows_with, AF_INET, AF_INET6, UDP_TABLE_OWNER_PID};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 #[repr(C)]
@@ -19,6 +19,48 @@ struct UdpRowV6 {
 }
 
 pub(crate) type UdpBinding = (String, u16, u32);
+
+/// Count IPv4 and IPv6 UDP bindings without materializing Python rows.
+pub(crate) fn count_udp_bindings() -> Result<usize, String> {
+    let mut count = 0_usize;
+    let mut successful_tables = 0_usize;
+    let mut errors = Vec::new();
+
+    unsafe {
+        match query_udp_rows_with::<UdpRowV4, _>(
+            AF_INET,
+            UDP_TABLE_OWNER_PID,
+            100_000,
+            "GetExtendedUdpTable(AF_INET)",
+            |rows| rows.len(),
+        ) {
+            Ok(rows) => {
+                successful_tables += 1;
+                count += rows;
+            }
+            Err(error) => errors.push(error),
+        }
+
+        match query_udp_rows_with::<UdpRowV6, _>(
+            AF_INET6,
+            UDP_TABLE_OWNER_PID,
+            100_000,
+            "GetExtendedUdpTable(AF_INET6)",
+            |rows| rows.len(),
+        ) {
+            Ok(rows) => {
+                successful_tables += 1;
+                count += rows;
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+
+    if successful_tables == 0 {
+        return Err(errors.join("; "));
+    }
+    Ok(count)
+}
 
 pub(crate) fn list_udp_bindings(limit: usize) -> Result<Vec<UdpBinding>, String> {
     let limit = limit.min(100_000);
