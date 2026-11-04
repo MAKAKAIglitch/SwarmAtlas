@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swarmatlas"
+version = "0.1.0"
+description = "A lightweight local dashboard for network traffic and peer geography."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "SwarmAtlas contributors" }]
+dependencies = ["psutil>=6.1,<8", "PySide6>=6.8,<7"]
+
+[project.optional-dependencies]
+geoip = ["geoip2>=4.8,<6"]
+dev = ["pytest>=8.0,<9"]
+
+[project.scripts]
+swarmatlas = "swarmatlas.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
