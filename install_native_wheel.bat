@@ -5,6 +5,9 @@ cd /d "%~dp0"
 set "VENV_PY=%~dp0.venv\Scripts\python.exe"
 set "WHEEL="
 
+echo Close SwarmAtlas before installing the native module.
+echo.
+
 if not exist "%VENV_PY%" (
     echo [SwarmAtlas Rust] Run run_windows.bat once to prepare the Python environment.
     echo.
@@ -20,9 +23,11 @@ if not exist "%~dp0native\dist" (
     exit /b 1
 )
 
-for %%W in ("%~dp0native\dist\swarmatlas_native-*-cp311-abi3-win_amd64.whl") do (
+pushd "%~dp0native\dist"
+for %%W in (swarmatlas_native-*-cp311-abi3-win_amd64.whl) do (
     if exist "%%~fW" set "WHEEL=%%~fW"
 )
+popd
 
 if not defined WHEEL (
     echo [SwarmAtlas Rust] No compatible Windows x64 stable-ABI wheel was found.
