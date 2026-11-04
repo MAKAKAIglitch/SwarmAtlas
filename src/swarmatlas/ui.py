@@ -738,16 +738,16 @@ class WorldMap(QWidget):
         if not self._map_rect().contains(position):
             return None
         nearest_index: int | None = None
-        nearest_distance = 13.0
+        nearest_distance_squared = 13.0 * 13.0
         map_rect = self._map_rect()
         for index, normalized in enumerate(self._location_world_points):
             point = self._screen_point_from_normalized(normalized, map_rect)
             dx = point.x() - position.x()
             dy = point.y() - position.y()
-            distance = (dx * dx + dy * dy) ** 0.5
-            if distance < nearest_distance:
+            distance_squared = dx * dx + dy * dy
+            if distance_squared < nearest_distance_squared:
                 nearest_index = index
-                nearest_distance = distance
+                nearest_distance_squared = distance_squared
         return nearest_index
 
     @staticmethod
@@ -794,12 +794,13 @@ class WorldMap(QWidget):
                 self.empty_text,
             )
         else:
+            marker_bounds = map_rect.adjusted(-8, -8, 8, 8)
+            painter.setPen(QPen(QColor(colors["accent"]), 1))
+            painter.setBrush(QColor(colors["accent_light"]))
             for index, normalized in enumerate(self._location_world_points):
                 point = self._screen_point_from_normalized(normalized, map_rect)
-                if not map_rect.adjusted(-8, -8, 8, 8).contains(point):
+                if not marker_bounds.contains(point):
                     continue
-                painter.setPen(QPen(QColor(colors["accent"]), 1))
-                painter.setBrush(QColor(colors["accent_light"]))
                 radius = 7.0 if index == self._hovered_index else 4.8
                 painter.drawEllipse(point, radius, radius)
 
