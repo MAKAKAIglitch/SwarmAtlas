@@ -37,8 +37,8 @@ Open **GeoIP provider** in the sidebar to choose one of the following. The defau
 | **IP-API.com** | Online country, region, city, coordinates, ISP and ASN/organization | Free endpoint is non-commercial only, HTTP (not HTTPS), and limited to 45 requests/minute. |
 | **ipdata.co** | Online country, region, city, coordinates and ASN/organization | Free allowance: up to 1,000 city-level lookups/day. Attribution is required; commercial use is permitted under the provider's free-plan conditions. |
 | **ipapi.is** | Online country, region, city, coordinates and network/ASN details | Anonymous tier: 30 lookups/day; a free account/key raises the documented allowance to 1,000/day. |
-| **IPinfo Lite** | Online country and ASN/AS name | Requires an IPinfo token. Lite is country/ASN-level data; it does not provide city coordinates. |
-| **2ip.io** | Online country, city and network/ASN data | Requires an API token. The published free-token limit is 3 requests/second. |
+| **IPinfo Lite** | Online country and ASN/AS name | Requires an IPinfo token. Lite is country/ASN-level data; it does not provide city coordinates. Public use requires attribution. |
+| **2ip.io** | Online country, city and network/ASN data | Requires an API token. The provider advertises 10,000 free requests/month after registration and a free-token rate limit of 3 requests/second. SwarmAtlas stops at 9,500 requests/month to leave a safety margin. |
 
 The online providers are intentionally not queried in parallel: select one source at a time. Lookups run in a background worker, public IPs are cached in memory, provider request rates are limited, and daily free-tier budgets are tracked locally. Private, loopback and link-local addresses are never sent to a remote GeoIP API. Switching back to DB-IP Lite returns to local lookups.
 
