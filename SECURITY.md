@@ -33,6 +33,8 @@ The monitor itself should not bind/listen on a port or create tunnels. The curre
 
 Observed public IPs, process IDs/names, GeoIP metadata, settings and traffic history remain in the user's local SwarmAtlas data directory. They are not uploaded to a SwarmAtlas service. The update helper only contacts GitHub when the user runs it; the first-run package installer downloads its declared dependencies from the configured package index.
 
+SQLite history and diagnostic logs are not encrypted at rest by SwarmAtlas. They rely on the Windows user-profile file permissions. Anyone with read access to that Windows account can inspect saved peer IPs, process names and local paths. Do not publish the database or logs publicly.
+
 ## Future features
 
 Per-flow byte accounting is not implemented. Before selecting a backend, evaluate its privilege requirements, whether it installs filters/drivers, whether it can affect packet processing, its CPU/memory overhead, and how it is removed. Any such feature must be a separate, disabled-by-default module with explicit user consent and a documented rollback path. The read-only interface-counter mode must remain available independently.
