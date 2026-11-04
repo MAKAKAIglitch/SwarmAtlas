@@ -158,7 +158,7 @@ class RemoteGeoLocator:
             limit = "1,000/day with a key" if self.api_key else "30/day without a key"
             return f"ipapi.is: free tier · {limit}"
         if self.provider == "2ip":
-            return "2ip.io: token configured · free token limit 3 requests/second"
+            return "2ip.io: token configured · up to 10,000 free requests/month · 3 requests/second; SwarmAtlas caps at 9,500/month"
         return f"{name}: ready"
 
     def _load_usage(self) -> None:
@@ -284,7 +284,7 @@ class RemoteGeoLocator:
             params = {"q": encoded_ip}
             if self.api_key:
                 params["key"] = self.api_key
-            return "https://api.ipapi.is/?" + urlencode(params)
+            return "https://api.ipapi.is/"
         if self.provider == "ipinfo-lite":
             return f"https://api.ipinfo.io/lite/{encoded_ip}?" + urlencode({"token": self.api_key})
         if self.provider == "2ip":
@@ -292,10 +292,23 @@ class RemoteGeoLocator:
         raise ValueError("Unsupported GeoIP provider")
 
     def _fetch(self, ip: str) -> dict[str, Any]:
-        request = Request(
-            self._url(ip),
-            headers={"User-Agent": "SwarmAtlas/0.2 (user-selected GeoIP provider)", "Accept": "application/json"},
-        )
+        headers = {
+            "User-Agent": "SwarmAtlas/0.2 (user-selected GeoIP provider)",
+            "Accept": "application/json",
+        }
+        if self.provider == "ipapi-is":
+            body: dict[str, str] = {"q": ip}
+            if self.api_key:
+                body["key"] = self.api_key
+            headers["Content-Type"] = "application/json"
+            request = Request(
+                self._url(ip),
+                data=json.dumps(body).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+        else:
+            request = Request(self._url(ip), headers=headers)
         with urlopen(request, timeout=7) as response:
             payload = response.read(MAX_RESPONSE_BYTES + 1)
         if len(payload) > MAX_RESPONSE_BYTES:
