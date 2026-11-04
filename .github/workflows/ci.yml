@@ -34,7 +34,7 @@ jobs:
       - name: Verify Windows process ownership APIs
         run: python -c "import _swarmatlas_native as n; print(n.capabilities()); print('TCP rows:', len(n.list_tcp_connections())); print('UDP bindings:', len(n.list_udp_bindings()))"
       - run: python -m pytest
-      - run: python -m compileall run_windows.py update_project.py src
+      - run: python -m compileall run_windows.py update_project.py src benchmarks
       - uses: actions/upload-artifact@v4
         with:
           name: swarmatlas-native-win-x64
