@@ -40,7 +40,8 @@ if not defined WHEEL (
 echo [SwarmAtlas Rust] Installing the prebuilt local wheel:
 echo %WHEEL%
 echo.
-"%VENV_PY%" -m pip install --no-deps --force-reinstall "%WHEEL%"
+set "PIP_DISABLE_PIP_VERSION_CHECK=1"
+"%VENV_PY%" -m pip install --no-index --no-deps --force-reinstall "%WHEEL%"
 if errorlevel 1 goto :failed
 
 "%VENV_PY%" -c "import _swarmatlas_native as n; print('Rust core:', n.__version__); print('Features:', ', '.join(n.capabilities())); print('TCP rows:', len(n.list_tcp_connections(10))); print('UDP bindings:', len(n.list_udp_bindings(10)))"
