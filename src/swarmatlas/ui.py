@@ -1250,6 +1250,10 @@ class MainWindow(QMainWindow):
         name, url = sources.get(self.config.geoip_provider, sources["dbip"])
         source_link = f'<a href="{url}">{name}</a>'
         natural_earth = '<a href="https://www.naturalearthdata.com/">Natural Earth</a>'
+        if self.config.geoip_provider in {"ipdata", "ip2location"}:
+            return self.t(
+                f"map_attribution_{self.config.geoip_provider}"
+            ).format(boundaries=natural_earth)
         return self.t("map_attribution").format(source=source_link, boundaries=natural_earth)
 
     def open_map_dialog(self) -> None:
