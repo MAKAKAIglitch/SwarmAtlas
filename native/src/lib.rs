@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 #[cfg(windows)]
 mod windows_ip_helper {
     use std::ffi::c_void;
-    use std::mem::{size_of, zeroed};
+    use std::mem::size_of;
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::ptr::{null_mut, read};
     use std::slice;
@@ -171,7 +171,8 @@ mod windows_ip_helper {
 
             let base = storage.as_ptr();
             let row_count = read(base) as usize;
-            let available_bytes = (actual_bytes as usize) - size_of::<u32>();
+            let safe_bytes = (actual_bytes as usize).min(storage.len() * size_of::<u32>());
+            let available_bytes = safe_bytes - size_of::<u32>();
             let available_rows = available_bytes / size_of::<T>();
             if row_count > available_rows {
                 return Err(format!(
