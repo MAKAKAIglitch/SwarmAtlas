@@ -68,6 +68,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "status_geoip_open": "Could not open GeoIP database: {detail}",
         "status_local_geoip": "Local GeoIP: {name}",
         "status_geoip_ready": "Local GeoIP databases prepared: {detail}",
+        "status_geoip_invalid": "No usable GeoIP databases: {detail}",
         "status_endpoints": "{count} public endpoints observed (scan every 15 s)",
         "status_interface_error": "Interface counters unavailable: {detail}",
         "status_socket_error": "Socket table unavailable: {detail}",
@@ -140,6 +141,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "status_geoip_open": "Не удалось открыть базу GeoIP: {detail}",
         "status_local_geoip": "Локальная база GeoIP: {name}",
         "status_geoip_ready": "Подготовлены локальные базы GeoIP: {detail}",
+        "status_geoip_invalid": "Не удалось загрузить базы GeoIP: {detail}",
         "status_endpoints": "Обнаружено публичных узлов: {count} (сканирование каждые 15 с)",
         "status_interface_error": "Счётчики интерфейса недоступны: {detail}",
         "status_socket_error": "Таблица соединений недоступна: {detail}",
@@ -187,6 +189,10 @@ def translate_status(status: str, language: str = "ru") -> str:
         match = re.match(pattern, status)
         if match:
             return tr(translation_key, language, **{field: match.group(1)})
+
+    match = re.match(r"^No usable GeoIP databases: (.*)$", status)
+    if match:
+        return tr("status_geoip_invalid", language, detail=match.group(1))
 
     match = re.match(r"^Local GeoIP ready: (.*?)(?:; skipped (\d+))?$", status)
     if match:
