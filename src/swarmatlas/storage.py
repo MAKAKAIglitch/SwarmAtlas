@@ -55,6 +55,9 @@ class Store:
                     country TEXT,
                     region TEXT,
                     city TEXT,
+                    asn INTEGER,
+                    organization TEXT,
+                    isp TEXT,
                     latitude REAL,
                     longitude REAL,
                     active INTEGER NOT NULL DEFAULT 0,
@@ -64,6 +67,12 @@ class Store:
                     ON destinations(last_seen);
                 """
             )
+            existing = {
+                str(row[1]) for row in self._db.execute("PRAGMA table_info(destinations)")
+            }
+            for column, definition in (("asn", "INTEGER"), ("organization", "TEXT"), ("isp", "TEXT")):
+                if column not in existing:
+                    self._db.execute(f"ALTER TABLE destinations ADD COLUMN {column} {definition}")
 
     def record_interface(
         self, interface: str, sent: int, received: int, timestamp: float | None = None
@@ -135,14 +144,18 @@ class Store:
                     """
                     INSERT INTO destinations (
                         ip, port, protocol, first_seen, last_seen, country_code,
-                        country, region, city, latitude, longitude, active
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        country, region, city, asn, organization, isp,
+                        latitude, longitude, active
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                     ON CONFLICT(ip, port, protocol) DO UPDATE SET
                         last_seen = excluded.last_seen,
                         country_code = COALESCE(excluded.country_code, destinations.country_code),
                         country = COALESCE(excluded.country, destinations.country),
                         region = COALESCE(excluded.region, destinations.region),
                         city = COALESCE(excluded.city, destinations.city),
+                        asn = COALESCE(excluded.asn, destinations.asn),
+                        organization = COALESCE(excluded.organization, destinations.organization),
+                        isp = COALESCE(excluded.isp, destinations.isp),
                         latitude = COALESCE(excluded.latitude, destinations.latitude),
                         longitude = COALESCE(excluded.longitude, destinations.longitude),
                         active = 1
@@ -150,7 +163,8 @@ class Store:
                     (
                         item["ip"], item["port"], item["protocol"], timestamp, timestamp,
                         item.get("country_code"), item.get("country"), item.get("region"),
-                        item.get("city"), item.get("latitude"), item.get("longitude"),
+                        item.get("city"), item.get("asn"), item.get("organization"),
+                        item.get("isp"), item.get("latitude"), item.get("longitude"),
                     ),
                 )
 
@@ -165,7 +179,7 @@ class Store:
             destinations = self._db.execute(
                 """
                 SELECT ip, port, protocol, country_code, country, region, city,
-                       latitude, longitude, last_seen
+                       asn, organization, isp, latitude, longitude, last_seen
                 FROM destinations
                 WHERE active = 1 AND last_seen >= ?
                 ORDER BY last_seen DESC
