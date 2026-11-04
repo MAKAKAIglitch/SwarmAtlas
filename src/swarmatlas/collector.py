@@ -25,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Conservative polling: the socket/owner tables are scanned less often than byte counters.
 COUNTER_SAMPLE_INTERVAL_SEC = 1.0
-ENDPOINT_SCAN_INTERVAL_SEC = 3.0
+ENDPOINT_SCAN_INTERVAL_SEC = 5.0
 HISTORY_SAMPLE_INTERVAL_SEC = 10.0
 MAX_TRACKED_ENDPOINTS = 2000
 PROCESS_NAME_CACHE_LIMIT = 512
