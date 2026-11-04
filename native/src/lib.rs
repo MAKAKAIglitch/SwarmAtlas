@@ -118,8 +118,12 @@ mod windows_ip_helper {
         query: QueryTable,
         family: u32,
         table_class: i32,
+        limit: usize,
         name: &str,
     ) -> Result<Vec<T>, String> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let mut required_bytes = 0_u32;
         let first_status = query(
             null_mut(),
@@ -180,8 +184,11 @@ mod windows_ip_helper {
                 ));
             }
 
+            // Copy only the bounded prefix into Rust-owned rows; avoid allocating
+            // Python objects for the entire OS table.
+            let rows_to_copy = row_count.min(limit);
             let rows_ptr = base.add(1).cast::<T>();
-            return Ok(slice::from_raw_parts(rows_ptr, row_count).to_vec());
+            return Ok(slice::from_raw_parts(rows_ptr, rows_to_copy).to_vec());
         }
 
         Err(format!(
@@ -192,8 +199,12 @@ mod windows_ip_helper {
     pub(super) type TcpConnection = (String, u16, String, u32, u16, String);
     pub(super) type UdpBinding = (String, u16, u32);
 
-    pub(super) fn list_tcp_connections() -> Result<Vec<TcpConnection>, String> {
-        let mut rows = Vec::new();
+    pub(super) fn list_tcp_connections(limit: usize) -> Result<Vec<TcpConnection>, String> {
+        let limit = limit.min(100_000);
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut rows = Vec::with_capacity(limit.min(2048));
         let mut successful_tables = 0_usize;
         let mut errors = Vec::new();
 
@@ -202,11 +213,11 @@ mod windows_ip_helper {
                 GetExtendedTcpTable,
                 AF_INET,
                 TCP_TABLE_OWNER_PID_ALL,
+                limit,
                 "GetExtendedTcpTable(AF_INET)",
             ) {
                 Ok(table) => {
                     successful_tables += 1;
-                    rows.reserve(table.len());
                     for row in table {
                         let remote = Ipv4Addr::from(row.remote_addr.to_ne_bytes());
                         if remote.is_unspecified() {
@@ -220,36 +231,45 @@ mod windows_ip_helper {
                             decode_port(row.local_port),
                             tcp_state(row.state).to_owned(),
                         ));
+                        if rows.len() >= limit {
+                            break;
+                        }
                     }
                 }
                 Err(error) => errors.push(error),
             }
 
-            match query_rows::<TcpRowV6>(
-                GetExtendedTcpTable,
-                AF_INET6,
-                TCP_TABLE_OWNER_PID_ALL,
-                "GetExtendedTcpTable(AF_INET6)",
-            ) {
-                Ok(table) => {
-                    successful_tables += 1;
-                    rows.reserve(table.len());
-                    for row in table {
-                        let remote = Ipv6Addr::from(row.remote_addr);
-                        if remote.is_unspecified() {
-                            continue;
+            let remaining = limit.saturating_sub(rows.len());
+            if remaining > 0 {
+                match query_rows::<TcpRowV6>(
+                    GetExtendedTcpTable,
+                    AF_INET6,
+                    TCP_TABLE_OWNER_PID_ALL,
+                    remaining,
+                    "GetExtendedTcpTable(AF_INET6)",
+                ) {
+                    Ok(table) => {
+                        successful_tables += 1;
+                        for row in table {
+                            let remote = Ipv6Addr::from(row.remote_addr);
+                            if remote.is_unspecified() {
+                                continue;
+                            }
+                            rows.push((
+                                remote.to_string(),
+                                decode_port(row.remote_port),
+                                "TCP".to_owned(),
+                                row.owning_pid,
+                                decode_port(row.local_port),
+                                tcp_state(row.state).to_owned(),
+                            ));
+                            if rows.len() >= limit {
+                                break;
+                            }
                         }
-                        rows.push((
-                            remote.to_string(),
-                            decode_port(row.remote_port),
-                            "TCP".to_owned(),
-                            row.owning_pid,
-                            decode_port(row.local_port),
-                            tcp_state(row.state).to_owned(),
-                        ));
                     }
+                    Err(error) => errors.push(error),
                 }
-                Err(error) => errors.push(error),
             }
         }
 
@@ -259,8 +279,12 @@ mod windows_ip_helper {
         Ok(rows)
     }
 
-    pub(super) fn list_udp_bindings() -> Result<Vec<UdpBinding>, String> {
-        let mut rows = Vec::new();
+    pub(super) fn list_udp_bindings(limit: usize) -> Result<Vec<UdpBinding>, String> {
+        let limit = limit.min(100_000);
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut rows = Vec::with_capacity(limit.min(2048));
         let mut successful_tables = 0_usize;
         let mut errors = Vec::new();
 
@@ -269,11 +293,11 @@ mod windows_ip_helper {
                 GetExtendedUdpTable,
                 AF_INET,
                 UDP_TABLE_OWNER_PID,
+                limit,
                 "GetExtendedUdpTable(AF_INET)",
             ) {
                 Ok(table) => {
                     successful_tables += 1;
-                    rows.reserve(table.len());
                     for row in table {
                         let local = Ipv4Addr::from(row.local_addr.to_ne_bytes());
                         rows.push((
@@ -281,30 +305,39 @@ mod windows_ip_helper {
                             decode_port(row.local_port),
                             row.owning_pid,
                         ));
+                        if rows.len() >= limit {
+                            break;
+                        }
                     }
                 }
                 Err(error) => errors.push(error),
             }
 
-            match query_rows::<UdpRowV6>(
-                GetExtendedUdpTable,
-                AF_INET6,
-                UDP_TABLE_OWNER_PID,
-                "GetExtendedUdpTable(AF_INET6)",
-            ) {
-                Ok(table) => {
-                    successful_tables += 1;
-                    rows.reserve(table.len());
-                    for row in table {
-                        let local = Ipv6Addr::from(row.local_addr);
-                        rows.push((
-                            local.to_string(),
-                            decode_port(row.local_port),
-                            row.owning_pid,
-                        ));
+            let remaining = limit.saturating_sub(rows.len());
+            if remaining > 0 {
+                match query_rows::<UdpRowV6>(
+                    GetExtendedUdpTable,
+                    AF_INET6,
+                    UDP_TABLE_OWNER_PID,
+                    remaining,
+                    "GetExtendedUdpTable(AF_INET6)",
+                ) {
+                    Ok(table) => {
+                        successful_tables += 1;
+                        for row in table {
+                            let local = Ipv6Addr::from(row.local_addr);
+                            rows.push((
+                                local.to_string(),
+                                decode_port(row.local_port),
+                                row.owning_pid,
+                            ));
+                            if rows.len() >= limit {
+                                break;
+                            }
+                        }
                     }
+                    Err(error) => errors.push(error),
                 }
-                Err(error) => errors.push(error),
             }
         }
 
@@ -313,6 +346,7 @@ mod windows_ip_helper {
         }
         Ok(rows)
     }
+
 
     #[cfg(test)]
     mod tests {
@@ -338,28 +372,32 @@ mod windows_ip_helper {
     pub(super) type TcpConnection = (String, u16, String, u32, u16, String);
     pub(super) type UdpBinding = (String, u16, u32);
 
-    pub(super) fn list_tcp_connections() -> Result<Vec<TcpConnection>, String> {
+    pub(super) fn list_tcp_connections(_limit: usize) -> Result<Vec<TcpConnection>, String> {
         Err("The native SwarmAtlas monitor currently supports Windows only".to_owned())
     }
 
-    pub(super) fn list_udp_bindings() -> Result<Vec<UdpBinding>, String> {
+    pub(super) fn list_udp_bindings(_limit: usize) -> Result<Vec<UdpBinding>, String> {
         Err("The native SwarmAtlas monitor currently supports Windows only".to_owned())
     }
 }
 
 #[pyfunction]
+#[pyo3(signature = (limit=50000))]
 fn list_tcp_connections(
     py: Python<'_>,
+    limit: usize,
 ) -> PyResult<Vec<windows_ip_helper::TcpConnection>> {
-    py.detach(windows_ip_helper::list_tcp_connections)
+    py.detach(move || windows_ip_helper::list_tcp_connections(limit))
         .map_err(PyRuntimeError::new_err)
 }
 
 #[pyfunction]
+#[pyo3(signature = (limit=50000))]
 fn list_udp_bindings(
     py: Python<'_>,
+    limit: usize,
 ) -> PyResult<Vec<windows_ip_helper::UdpBinding>> {
-    py.detach(windows_ip_helper::list_udp_bindings)
+    py.detach(move || windows_ip_helper::list_udp_bindings(limit))
         .map_err(PyRuntimeError::new_err)
 }
 
