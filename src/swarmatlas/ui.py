@@ -486,6 +486,10 @@ class WorldMap(QWidget):
 
         new_signature = tuple(signature)
         if new_signature == self._location_signature:
+            # Remember the latest immutable snapshot object as well. Without
+            # this assignment, an identical-but-new list would be re-scanned
+            # for a signature on every subsequent one-second UI update.
+            self._location_source = locations
             return
 
         self.locations = valid
