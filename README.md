@@ -29,6 +29,10 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 | Current upload/download rate | Implemented |
 | Persistent local history (SQLite) | Implemented |
 | Active public remote endpoints | Implemented |
+| TCP connection ownership (PID/process name) via the optional Rust core | Implemented |
+| UDP local socket ownership (PID) via the optional Rust core | Implemented |
+| Per-process destination history | Implemented |
+| Rust-to-Python native bridge (PyO3) | Implemented; optional build |
 | Offline city/country/ASN/ISP lookup using multiple local GeoIP databases | Optional |
 | GeoIP readers warmed in the background on startup | Implemented |
 | System-matched theme and language | Implemented |
@@ -45,7 +49,8 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 ## Resource-conscious collection
 
 - Interface counters: sampled once per second.
-- OS socket table: scanned every 15 seconds.
+- OS socket/owner tables: scanned every 15 seconds.
+- When the optional Rust extension is installed, TCP IPv4/IPv6 ownership is read through Windows IP Helper APIs; UDP local bind ownership is read separately. The Python fallback remains available.
 - Endpoint list: capped at 2,000 entries per scan.
 - Traffic history: sampled every 10 seconds and retained for 90 days.
 - GeoIP results: cached in memory (maximum 8,192 addresses) to avoid repeated disk lookups.
@@ -82,6 +87,29 @@ The manual command does not use the Windows launcher's log capture.
 For development dependencies:
 
     .\.venv\Scripts\python -m pip install -e ".[geoip,dev]"
+
+## Optional Rust performance core
+
+The application remains Python-first: PySide6, Mica/Fluent styling, localization, settings, SQLite, GeoIP orchestration, and updating stay in Python.
+
+A separate Rust extension handles the Windows connection-owner tables. It uses PyO3 to expose a small native module to Python and the documented read-only IP Helper APIs:
+
+- TCP IPv4 and IPv6: remote/local endpoint, TCP state, and owning PID.
+- UDP IPv4 and IPv6: local bind address, port, and owning PID.
+
+The current Windows UDP ownership API reports local socket bindings; it does **not** reveal the remote IP of every datagram. SwarmAtlas only associates a UDP peer when the OS socket table exposes a connected remote endpoint.
+
+The Rust module is optional. Without it, the existing psutil-based Python collector continues to run. The status bar identifies which backend is active.
+
+To build the optional Rust module:
+
+1. Install the stable Rust toolchain (Rust 1.85 or newer) from [rustup.rs](https://rustup.rs/).
+2. Run `build_native.bat` from the SwarmAtlas folder.
+3. Restart SwarmAtlas.
+
+The build uses PyO3 0.30.1 and maturin 1.16.0. It compiles locally for the current Windows/Python environment; it does not install drivers or alter Windows networking. GitHub Actions also builds and tests a Windows x64 wheel and retains it as a workflow artifact.
+
+Rust is being introduced incrementally. Interface byte counters, SQLite, UI and GeoIP orchestration remain Python-side for now. Per-IP byte accounting is not implemented by this TCP/UDP table reader.
 
 ## Appearance and language
 
@@ -123,7 +151,7 @@ All application data stays on this PC:
 - Windows: %APPDATA%\SwarmAtlas\
 - Other platforms: ~/.local/share/SwarmAtlas/
 
-The SQLite database stores interface counters, traffic-rate samples, and observed public endpoint metadata. It never stores packet contents. No remote geolocation requests are made. Old endpoint records are removed after 30 days; traffic-rate samples are retained for 90 days.
+The SQLite database stores interface counters, traffic-rate samples, observed public endpoint metadata, and the process ID/name associated with observed connections. It never stores packet contents. No remote geolocation requests or runtime telemetry are sent. Old endpoint records are removed after 30 days; traffic-rate samples are retained for 90 days.
 
 ## Current measurement model
 
