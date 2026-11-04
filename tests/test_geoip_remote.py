@@ -117,3 +117,34 @@ def test_2ip_requires_a_user_supplied_token() -> None:
         assert "token required" in locator.status.lower()
     finally:
         locator.close()
+
+
+
+def test_ipapi_is_anonymous_response_uses_current_top_level_fields() -> None:
+    result = _normalize(
+        "ipapi-is",
+        {
+            "ip": "82.66.115.249",
+            "company": "Proxad / Free SAS",
+            "asn": "AS12322 Free SAS",
+            "city": "Goven",
+            "region": "Brittany",
+            "country": "France",
+            "lat": 48.0063,
+            "lon": -1.84667,
+        },
+    )
+    assert result["organization"] == "Proxad / Free SAS"
+    assert result["asn"] == 12322
+    assert result["city"] == "Goven"
+    assert result["latitude"] == 48.0063
+    assert result["longitude"] == -1.84667
+
+
+def test_2ip_monthly_free_budget_has_headroom() -> None:
+    locator = RemoteGeoLocator("2ip", "test-token")
+    try:
+        assert locator._monthly_limit() == 9500
+        assert locator._minimum_interval() >= 1 / 3
+    finally:
+        locator.close()
