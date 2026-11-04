@@ -13,6 +13,8 @@ def test_updater_preserves_virtualenv_and_local_databases() -> None:
     assert should_skip(Path("assets/GeoLite2-City.mmdb"))
     assert should_skip(Path("data/swarmatlas.sqlite3"))
     assert should_skip(Path("logs/latest.log"))
+    assert should_skip(Path("native/target/release/_swarmatlas_native.dll"))
+    assert should_skip(Path("native/dist/swarmatlas_native.whl"))
     assert not should_skip(Path("src/swarmatlas/ui.py"))
 
 
