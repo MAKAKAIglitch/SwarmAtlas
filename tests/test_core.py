@@ -223,3 +223,26 @@ def test_five_year_history_is_compacted_to_hourly_rows(tmp_path: Path) -> None:
     assert history[0]["upload_bps"] == 125.0
     assert history[0]["download_bps"] == 350.0
     store.close()
+
+
+
+def test_recent_destination_remains_visible_after_connection_closes(tmp_path: Path) -> None:
+    store = Store(tmp_path / "recent-destination.sqlite3")
+    store.update_destinations(
+        [{
+            "ip": "8.8.8.8",
+            "port": 443,
+            "protocol": "TCP",
+            "process_id": 4567,
+        }],
+        timestamp=100.0,
+    )
+
+    # A later socket-table scan sees no active connection. The IP should
+    # remain in the recent-destinations view for the 30-second visibility window.
+    store.update_destinations([], timestamp=105.0)
+    summary = store.summary("Ethernet", now=110.0)
+
+    assert len(summary["active_endpoints"]) == 1
+    assert summary["active_endpoints"][0]["ip"] == "8.8.8.8"
+    store.close()
