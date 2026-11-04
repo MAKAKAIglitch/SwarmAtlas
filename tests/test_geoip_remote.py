@@ -168,3 +168,39 @@ def test_ipdata_current_documented_root_level_asn_response() -> None:
     assert result["organization"] == "Google LLC"
     assert result["country_code"] == "US"
     assert result["city"] == "Syracuse"
+
+
+def test_ip2location_response_is_normalized() -> None:
+    result = _normalize(
+        "ip2location",
+        {
+            "country_code": "US",
+            "country_name": "United States of America",
+            "region_name": "California",
+            "city_name": "Mountain View",
+            "latitude": 37.38605,
+            "longitude": -122.08385,
+            "asn": "15169",
+            "as": "Google LLC",
+            "isp": "Google LLC",
+        },
+    )
+    assert result["country_code"] == "US"
+    assert result["region"] == "California"
+    assert result["city"] == "Mountain View"
+    assert result["asn"] == 15169
+    assert result["organization"] == "Google LLC"
+
+
+def test_ip2location_free_tier_limits_depend_on_key_presence() -> None:
+    keyless = RemoteGeoLocator("ip2location")
+    keyed = RemoteGeoLocator("ip2location", "test-token")
+    try:
+        assert keyless._daily_limit() == 950
+        assert keyless._monthly_limit() is None
+        assert keyed._daily_limit() is None
+        assert keyed._monthly_limit() == 47500
+        assert keyed._minimum_interval() >= 0.5
+    finally:
+        keyless.close()
+        keyed.close()
