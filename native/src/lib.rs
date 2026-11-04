@@ -7,8 +7,10 @@ mod platform;
 
 use platform::{
     count_udp_bindings as read_udp_count,
+    list_network_interfaces as read_network_interfaces,
     list_tcp_connections as read_tcp_connections,
     list_udp_bindings as read_udp_bindings,
+    resolve_process_names as read_process_names,
 };
 
 #[pyfunction]
@@ -36,6 +38,29 @@ fn list_udp_bindings(
 #[pyfunction]
 fn count_udp_bindings(py: Python<'_>) -> PyResult<usize> {
     py.detach(read_udp_count).map_err(PyRuntimeError::new_err)
+}
+
+/// Return adapter aliases, operational state, sent bytes and received bytes.
+#[pyfunction]
+fn list_network_interfaces(py: Python<'_>) -> PyResult<Vec<platform::NetworkInterface>> {
+    py.detach(read_network_interfaces)
+        .map_err(PyRuntimeError::new_err)
+}
+
+/// Resolve only the process IDs present in the current socket snapshot.
+#[pyfunction]
+fn resolve_process_names(
+    py: Python<'_>,
+    process_ids: Vec<u32>,
+) -> PyResult<Vec<platform::ProcessName>> {
+    const MAX_PROCESS_IDS: usize = 4096;
+    if process_ids.len() > MAX_PROCESS_IDS {
+        return Err(PyValueError::new_err(format!(
+            "at most {MAX_PROCESS_IDS} process IDs can be resolved per call"
+        )));
+    }
+    py.detach(move || read_process_names(&process_ids))
+        .map_err(PyRuntimeError::new_err)
 }
 
 /// Batch geometry work so Python crosses the FFI boundary once per bounded
@@ -70,6 +95,8 @@ fn capabilities() -> Vec<&'static str> {
         "udp-owner-pid",
         "udp-socket-count",
         "map-geometry-v1",
+        "network-interfaces-v1",
+        "process-names-v1",
         "ipv4",
         "ipv6",
         "read-only",
@@ -81,6 +108,8 @@ fn _swarmatlas_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(list_tcp_connections, module)?)?;
     module.add_function(wrap_pyfunction!(list_udp_bindings, module)?)?;
     module.add_function(wrap_pyfunction!(count_udp_bindings, module)?)?;
+    module.add_function(wrap_pyfunction!(list_network_interfaces, module)?)?;
+    module.add_function(wrap_pyfunction!(resolve_process_names, module)?)?;
     module.add_function(wrap_pyfunction!(project_and_simplify_rings, module)?)?;
     module.add_function(wrap_pyfunction!(capabilities, module)?)?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;

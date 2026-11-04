@@ -13,6 +13,8 @@ NATIVE_VERSION = ""
 NATIVE_LOAD_ERROR = ""
 NATIVE_CAPABILITIES: frozenset[str] = frozenset()
 NATIVE_MAP_GEOMETRY = False
+NATIVE_INTERFACE_COUNTERS = False
+NATIVE_PROCESS_NAMES = False
 
 try:
     import _swarmatlas_native as candidate
@@ -34,6 +36,12 @@ try:
     NATIVE_MAP_GEOMETRY = "map-geometry-v1" in capabilities and callable(
         getattr(candidate, "project_and_simplify_rings", None)
     )
+    NATIVE_INTERFACE_COUNTERS = "network-interfaces-v1" in capabilities and callable(
+        getattr(candidate, "list_network_interfaces", None)
+    )
+    NATIVE_PROCESS_NAMES = "process-names-v1" in capabilities and callable(
+        getattr(candidate, "resolve_process_names", None)
+    )
 except Exception as exc:
     # An incompatible or partially installed extension must never prevent the
     # Python collector and the rest of the desktop application from starting.
@@ -43,11 +51,20 @@ except Exception as exc:
     NATIVE_LOAD_ERROR = type(exc).__name__
     NATIVE_CAPABILITIES = frozenset()
     NATIVE_MAP_GEOMETRY = False
+    NATIVE_INTERFACE_COUNTERS = False
+    NATIVE_PROCESS_NAMES = False
 
 
 def backend_status() -> str:
     if NATIVE_AVAILABLE:
-        suffix = " · native map geometry" if NATIVE_MAP_GEOMETRY else ""
+        features = [
+            label for enabled, label in (
+                (NATIVE_MAP_GEOMETRY, "map geometry"),
+                (NATIVE_INTERFACE_COUNTERS, "interface counters"),
+                (NATIVE_PROCESS_NAMES, "process lookup"),
+            ) if enabled
+        ]
+        suffix = f" · {' · '.join(features)}" if features else ""
         return f"Rust monitor active ({NATIVE_VERSION}){suffix}"
     reason = f" ({NATIVE_LOAD_ERROR})" if NATIVE_LOAD_ERROR else ""
     return f"Rust monitor unavailable{reason}; using the Python compatibility collector"
@@ -61,6 +78,63 @@ def project_and_simplify_rings(
     if not NATIVE_MAP_GEOMETRY or _native is None:
         return None
     return _native.project_and_simplify_rings(rings, float(tolerance))
+
+
+def list_network_interfaces() -> dict[str, dict[str, Any]] | None:
+    """Read Windows interface counters in one native call, or return None for old wheels."""
+    if not NATIVE_INTERFACE_COUNTERS or _native is None:
+        return None
+
+    result: dict[str, dict[str, Any]] = {}
+    for row in _native.list_network_interfaces():
+        if len(row) != 4:
+            continue
+        name = str(row[0]).strip()
+        if not name:
+            continue
+        try:
+            sent = max(0, int(row[2]))
+            received = max(0, int(row[3]))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        result[name] = {
+            "is_up": bool(row[1]),
+            "bytes_sent": sent,
+            "bytes_recv": received,
+        }
+    return result
+
+
+def resolve_process_names(process_ids: Sequence[int]) -> dict[int, str] | None:
+    """Resolve a bounded batch of PIDs in Rust, or return None for old wheels."""
+    if not NATIVE_PROCESS_NAMES or _native is None:
+        return None
+
+    unique: set[int] = set()
+    for value in process_ids:
+        try:
+            pid = int(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if 0 < pid <= 0xFFFFFFFF:
+            unique.add(pid)
+    if not unique:
+        return {}
+    if len(unique) > 4096:
+        raise ValueError("At most 4096 process IDs can be resolved per call")
+
+    result: dict[int, str] = {}
+    for row in _native.resolve_process_names(sorted(unique)):
+        if len(row) != 2:
+            continue
+        try:
+            pid = int(row[0])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        name = str(row[1]).strip()
+        if pid in unique and name:
+            result[pid] = name
+    return result
 
 
 def list_tcp_connections(limit: int = 2000) -> list[dict[str, Any]]:

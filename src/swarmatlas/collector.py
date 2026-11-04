@@ -20,6 +20,10 @@ from .native import (
     backend_status,
     count_udp_bindings,
     list_tcp_connections,
+    NATIVE_INTERFACE_COUNTERS,
+    NATIVE_PROCESS_NAMES,
+    list_network_interfaces,
+    resolve_process_names,
 )
 from .storage import Store
 from .theme import resolve_language
@@ -67,38 +71,67 @@ def sampling_intervals(power_saver_enabled: bool) -> tuple[float, float, float]:
     )
 
 
-def available_interfaces() -> list[str]:
-    """Read interface state without changing adapter settings."""
-    stats = psutil.net_if_stats()
-    return sorted(name for name, item in stats.items() if item.isup)
+def _read_interface_snapshot(
+    interface_stats: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Read all adapter state and counters once, preferring the compact Rust API."""
+    if NATIVE_AVAILABLE and NATIVE_INTERFACE_COUNTERS:
+        try:
+            native_snapshot = list_network_interfaces()
+            if native_snapshot is not None:
+                return native_snapshot
+        except Exception as exc:
+            _LOGGER.debug(
+                "Native interface snapshot unavailable; using psutil fallback (%s)",
+                type(exc).__name__,
+            )
 
-
-def choose_default_interface() -> str:
-    """Choose an active interface using read-only OS counters."""
-    stats = psutil.net_if_stats()
+    stats = interface_stats if interface_stats is not None else psutil.net_if_stats()
     counters = psutil.net_io_counters(pernic=True) or {}
-    candidates: list[str] = []
-    for name, item in stats.items():
-        if not item.isup or any(marker in name.lower() for marker in VIRTUAL_MARKERS):
-            continue
-        candidates.append(name)
+    names = dict.fromkeys((*stats.keys(), *counters.keys()))
+    snapshot: dict[str, dict[str, Any]] = {}
+    for name in names:
+        state = stats.get(name)
+        counter = counters.get(name)
+        snapshot[name] = {
+            "is_up": bool(getattr(state, "isup", False)),
+            "bytes_sent": max(0, int(getattr(counter, "bytes_sent", 0) or 0)),
+            "bytes_recv": max(0, int(getattr(counter, "bytes_recv", 0) or 0)),
+        }
+    return snapshot
 
+
+def available_interfaces() -> list[str]:
+    """List active adapter aliases from a single OS snapshot."""
+    snapshot = _read_interface_snapshot()
+    return sorted(name for name, state in snapshot.items() if state["is_up"])
+
+
+def choose_default_interface(
+    snapshot: dict[str, dict[str, Any]] | None = None,
+) -> str:
+    """Choose the busiest active physical-looking interface using one OS snapshot."""
+    interfaces = snapshot if snapshot is not None else _read_interface_snapshot()
+    candidates = [
+        name for name, state in interfaces.items()
+        if state["is_up"] and not any(marker in name.lower() for marker in VIRTUAL_MARKERS)
+    ]
     if not candidates:
-        candidates = [name for name, item in stats.items() if item.isup]
+        candidates = [name for name, state in interfaces.items() if state["is_up"]]
     if not candidates:
         return ""
 
     preferred = [
         name for name in candidates
-        if any(token in name.lower() for token in ("ethernet", "wi-fi", "wifi", "wlan", "eth", "enp"))
+        if any(
+            token in name.lower()
+            for token in ("ethernet", "wi-fi", "wifi", "wlan", "eth", "enp")
+        )
     ]
     pool = preferred or candidates
     return max(
         pool,
-        key=lambda name: (
-            getattr(counters.get(name), "bytes_sent", 0)
-            + getattr(counters.get(name), "bytes_recv", 0)
-        ),
+        key=lambda name: interfaces[name]["bytes_sent"] + interfaces[name]["bytes_recv"],
     )
 
 
@@ -132,7 +165,7 @@ def _process_name(process_id: int | None) -> str | None:
 
 
 def _warm_process_name_cache(process_ids: Any) -> None:
-    """Resolve uncached PIDs in one process-table pass instead of opening each PID separately."""
+    """Resolve only connection-owner PIDs, using Rust when the new core is available."""
     now = time.monotonic()
     requested: set[int] = set()
     for process_id in process_ids:
@@ -142,7 +175,7 @@ def _warm_process_name_cache(process_ids: Any) -> None:
             pid = int(process_id)
         except (TypeError, ValueError, OverflowError):
             continue
-        if pid > 0:
+        if 0 < pid <= 0xFFFFFFFF:
             requested.add(pid)
     if not requested:
         return
@@ -154,12 +187,25 @@ def _warm_process_name_cache(process_ids: Any) -> None:
     for pid in expired:
         _PROCESS_NAME_CACHE.pop(pid, None)
 
-    missing = {
-        pid for pid in requested
-        if pid not in _PROCESS_NAME_CACHE
-    }
+    missing = requested.difference(_PROCESS_NAME_CACHE)
     if not missing:
         return
+
+    if NATIVE_AVAILABLE and NATIVE_PROCESS_NAMES:
+        try:
+            native_names = resolve_process_names(sorted(missing))
+        except Exception as exc:
+            _LOGGER.debug(
+                "Native process lookup unavailable; using psutil fallback (%s)",
+                type(exc).__name__,
+            )
+        else:
+            if native_names is not None:
+                for pid in missing:
+                    _PROCESS_NAME_CACHE[pid] = (now, native_names.get(pid))
+                while len(_PROCESS_NAME_CACHE) > PROCESS_NAME_CACHE_LIMIT:
+                    _PROCESS_NAME_CACHE.pop(next(iter(_PROCESS_NAME_CACHE)), None)
+                return
 
     try:
         processes = psutil.process_iter(attrs=["pid", "name"])
@@ -170,17 +216,13 @@ def _warm_process_name_cache(process_ids: Any) -> None:
                 if pid not in missing:
                     continue
                 name = info.get("name")
-                _PROCESS_NAME_CACHE[pid] = (
-                    now,
-                    str(name) if name else None,
-                )
+                _PROCESS_NAME_CACHE[pid] = (now, str(name) if name else None)
                 missing.remove(pid)
                 if not missing:
                     break
             except (psutil.Error, OSError, AttributeError, TypeError, ValueError):
                 continue
     except (psutil.Error, OSError):
-        # Fall back to the per-PID resolver below when process enumeration is restricted.
         return
 
     for pid in missing:
@@ -467,17 +509,21 @@ class NetworkWorker(QThread):
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
 
-    def _resolve_interface(self, requested: str | None) -> str:
-        """Resolve the selected adapter, falling back to automatic selection if unavailable."""
+    def _resolve_interface(
+        self,
+        requested: str | None,
+        snapshot: dict[str, dict[str, Any]] | None = None,
+    ) -> str:
+        """Resolve a selected adapter against an already captured OS snapshot."""
+        interfaces = snapshot if snapshot is not None else _read_interface_snapshot()
         name = str(requested or "auto")
         if not name.strip() or name.strip().casefold() == "auto":
-            return choose_default_interface()
+            return choose_default_interface(interfaces)
 
-        stats = psutil.net_if_stats()
-        state = stats.get(name)
-        if state is not None and state.isup:
+        state = interfaces.get(name)
+        if state is not None and state["is_up"]:
             return name
-        return choose_default_interface()
+        return choose_default_interface(interfaces)
     def set_interface(self, name: str) -> None:
         with self._lock:
             self._requested_interface = name
@@ -496,7 +542,7 @@ class NetworkWorker(QThread):
             self._history_range_seconds = max(60, min(int(seconds), 5 * 365 * 24 * 60 * 60))
 
     def set_power_saver_mode(self, enabled: bool) -> None:
-        """Reduce background polling while the desktop window is minimized."""
+        """Reduce polling only while SwarmAtlas is outside the foreground."""
         with self._lock:
             changed = self._power_saver_mode != bool(enabled)
             self._power_saver_mode = bool(enabled)
@@ -606,6 +652,7 @@ class NetworkWorker(QThread):
             cached_history: list[dict[str, Any]] = []
             cached_history_range: int | None = None
             last_history_refresh = 0.0
+            cached_interface_stats: dict[str, Any] | None = None
             connection_status = "Waiting for first network sample"
 
             while not self._stop_event.is_set():
@@ -655,10 +702,25 @@ class NetworkWorker(QThread):
                 interface_check_due = (
                     now_mono - last_interface_check >= interface_check_interval
                 )
+                try:
+                    # The native API returns state and counters together. The
+                    # psutil fallback refreshes interface state only at its
+                    # slower adapter-check cadence, but counters remain live.
+                    if not (NATIVE_AVAILABLE and NATIVE_INTERFACE_COUNTERS):
+                        if (
+                            interface_request_changed
+                            or interface_check_due
+                            or cached_interface_stats is None
+                        ):
+                            cached_interface_stats = psutil.net_if_stats()
+                    interface_snapshot = _read_interface_snapshot(cached_interface_stats)
+                except (psutil.Error, OSError) as exc:
+                    interface_snapshot = {}
+                    connection_status = f"Interface counters unavailable: {exc}"
                 if interface_request_changed or interface_check_due:
                     try:
-                        resolved = self._resolve_interface(requested)
-                    except psutil.Error:
+                        resolved = self._resolve_interface(requested, interface_snapshot)
+                    except (psutil.Error, OSError):
                         resolved = interface
                     last_interface_request = requested
                     last_interface_check = now_mono
@@ -666,19 +728,14 @@ class NetworkWorker(QThread):
                         interface = resolved
                         previous_time = now_mono
 
-                try:
-                    counters = psutil.net_io_counters(pernic=True) or {}
-                    current = counters.get(interface) if interface else None
-                except psutil.Error as exc:
-                    current = None
-                    connection_status = f"Interface counters unavailable: {exc}"
+                current = interface_snapshot.get(interface) if interface else None
 
                 elapsed = max(0.001, now_mono - previous_time)
                 previous_time = now_mono
 
                 if current is not None:
                     totals = store.record_interface(
-                        interface, current.bytes_sent, current.bytes_recv, now_wall
+                        interface, current["bytes_sent"], current["bytes_recv"], now_wall
                     )
                     interface_totals = {
                         "upload_total": int(totals["upload_total"]),

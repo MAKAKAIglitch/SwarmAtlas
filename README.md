@@ -124,8 +124,8 @@ Python application (PySide6 UI, settings, orchestration, provider logic)
 
 These are candidates, not claims that the work is already implemented:
 
-1. **Network adapter counters and interface enumeration.** Evaluate a Rust implementation using Windows IP Helper APIs such as `GetIfTable2`, with a mapping to the selected adapter. Compare it against the current psutil path at the normal one-second sampling interval. Keep the current implementation as a fallback until the native path is validated on different adapters and VPN/virtual interfaces.
-2. **Process-name resolution.** The current collector caches process names and refreshes them periodically. Benchmark the cache-miss path first; if it is material, add a bounded Rust resolver that accepts only the PIDs found in the socket snapshot and returns only the requested names. Do not enumerate or query every process on every network tick.
+1. **Network adapter counters and interface enumeration — moved to Rust.** The native core now reads `GetIfTable2` once per sample and returns only interface alias, operational state and byte counters. The collector reuses that same snapshot for adapter selection and live rates, instead of separately enumerating interfaces and counters through psutil. The psutil path remains as a compatibility fallback.
+2. **Process-name resolution — moved to Rust.** The native core takes one documented Tool Help process snapshot per endpoint scan and returns names only for PIDs present in the current socket snapshot. Python retains its 30-second PID cache and uses psutil only when the native feature is unavailable. The resolver has a hard 4,096-PID input bound.
 3. **Offline MMDB lookup.** Benchmark cold and warm lookups over realistic endpoint batches. Only if Python lookup time is significant, evaluate the Rust `maxminddb` reader, including mmap, locale handling and compatibility with the user's City/Country/ASN/ISP files.
 4. **Shapefile parsing.** Measure Natural Earth file parsing separately from archive download, antimeridian splitting, projection, simplification and Qt path construction. Move only the expensive parsing stage if it is a demonstrated startup bottleneck.
 5. **Optional ETW network-event collector.** If reliable UDP destination visibility is added, implement the Windows event consumer as a separate Rust subsystem. Keep it read-only, cancellable and opt-in; expose its CPU cost and sampling state, and do not capture or store packet payloads.
@@ -174,13 +174,15 @@ The Python application, UI, localization, GeoIP orchestration, settings and SQLi
 
 - `native/src/platform/windows/api.rs` owns bounded Windows IP Helper table queries and port decoding.
 - `native/src/platform/windows/tcp.rs` and `udp.rs` decode the IPv4/IPv6 owner-PID table layouts separately.
+- `native/src/platform/windows/interfaces.rs` reads interface names, operational state and byte counters through `GetIfTable2`; the same snapshot is used for adapter selection and the live rate sample.
+- `native/src/platform/windows/processes.rs` resolves only requested connection-owner PIDs from one Tool Help process snapshot; the Python collector caches results for 30 seconds.
 - `native/src/network/address.rs` canonicalizes IPv4-mapped IPv6 addresses and filters non-public/special-purpose destinations before Python objects are created.
 - `native/src/geo/geometry.rs` performs Web Mercator projection, radial filtering and iterative Douglas-Peucker simplification in bounded batches, with the GIL released while the numeric core runs.
-- `native/src/lib.rs` is only the PyO3 boundary; it releases the GIL while Windows tables are queried and decoded and while map geometry is processed.
+- `native/src/lib.rs` is only the PyO3 boundary; it releases the GIL while Windows tables, interface counters and process names are read and while map geometry is processed.
 
 For TCP, Rust scans a bounded OS-table prefix (up to 100,000 rows per address family), filters non-public addresses natively, and returns no more than the requested endpoint limit (2,000 in the dashboard). It visits the aligned Win32 buffer directly, so it does not allocate and copy a second vector of all raw rows. Python receives only usable public destinations and does not repeat the address classification for the current native capability.
 
-For UDP, Rust counts IPv4 and IPv6 owner-PID table rows without materializing per-socket Python tuples. The collector no longer reads the same Windows UDP binding table a second time through psutil. This count is deliberately distinct from remote UDP peers: Windows' owner-PID table contains local bindings and does not reveal arbitrary remote destinations.
+For UDP, Rust counts IPv4 and IPv6 owner-PID table rows without materializing per-socket Python tuples. The collector no longer reads the same Windows UDP binding table a second time through psutil. Interface counters and connection-owner process names also use compact Rust APIs, while psutil remains the compatibility fallback. This count is deliberately distinct from remote UDP peers: Windows' owner-PID table contains local bindings and does not reveal arbitrary remote destinations.
 
 Map geometry is sent to Rust in batches bounded by ring count and input vertex count. The Rust implementation preserves the Python algorithm's tolerance split and endpoint handling. Qt `QPainterPath` construction stays on the Python side because it is a Qt object boundary, not a worthwhile target for a language rewrite by itself. If the optional extension is unavailable, the original Python geometry implementation remains the compatibility fallback.
 

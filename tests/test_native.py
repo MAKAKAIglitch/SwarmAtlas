@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import ipaddress
+import os
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +22,8 @@ def test_native_extension_reports_read_only_windows_capabilities() -> None:
     assert "udp-socket-count" in capabilities
     assert "udp-owner-pid" in capabilities
     assert "map-geometry-v1" in capabilities
+    assert "network-interfaces-v1" in capabilities
+    assert "process-names-v1" in capabilities
     assert "ipv4" in capabilities
     assert "ipv6" in capabilities
 
@@ -48,6 +53,30 @@ def test_native_connection_tables_return_valid_rows() -> None:
         assert isinstance(row[0], str)
         assert 0 <= int(row[1]) <= 65535
         assert int(row[2]) >= 0
+
+
+def test_native_interface_snapshot_returns_compact_valid_rows() -> None:
+    rows = native.list_network_interfaces()
+    assert isinstance(rows, list)
+    for row in rows:
+        assert len(row) == 4
+        assert isinstance(row[0], str) and row[0]
+        assert isinstance(row[1], bool)
+        assert int(row[2]) >= 0
+        assert int(row[3]) >= 0
+
+
+def test_native_process_lookup_resolves_only_requested_process_ids() -> None:
+    current_pid = os.getpid()
+    rows = native.resolve_process_names([current_pid, current_pid])
+    assert len(rows) == 1
+    assert int(rows[0][0]) == current_pid
+    assert rows[0][1].lower() == Path(sys.executable).name.lower()
+
+
+def test_native_process_lookup_rejects_oversized_requests() -> None:
+    with pytest.raises(ValueError):
+        native.resolve_process_names(list(range(1, 4098)))
 
 
 def test_native_geometry_matches_the_python_reference() -> None:

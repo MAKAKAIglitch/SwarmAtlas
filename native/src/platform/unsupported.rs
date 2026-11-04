@@ -12,3 +12,14 @@ pub(crate) fn list_udp_bindings(_limit: usize) -> Result<Vec<UdpBinding>, String
 pub(crate) fn count_udp_bindings() -> Result<usize, String> {
     Err("The native SwarmAtlas monitor currently supports Windows only".to_owned())
 }
+
+pub(crate) type NetworkInterface = (String, bool, u64, u64);
+pub(crate) type ProcessName = (u32, String);
+
+pub(crate) fn list_network_interfaces() -> Result<Vec<NetworkInterface>, String> {
+    Err("Native interface counters currently support Windows only".to_owned())
+}
+
+pub(crate) fn resolve_process_names(_process_ids: &[u32]) -> Result<Vec<ProcessName>, String> {
+    Err("Native process lookup currently supports Windows only".to_owned())
+}

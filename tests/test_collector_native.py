@@ -168,13 +168,15 @@ def test_remote_parser_rejects_invalid_ports() -> None:
 
 
 def test_network_worker_resolves_auto_interface(monkeypatch) -> None:
-    monkeypatch.setattr(collector, "choose_default_interface", lambda: "Wi-Fi")
+    monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", False)
+    monkeypatch.setattr(collector, "choose_default_interface", lambda _snapshot=None: "Wi-Fi")
     worker = collector.NetworkWorker(AppConfig(interface="auto"))
 
     assert worker._resolve_interface("auto") == "Wi-Fi"
 
 
 def test_network_worker_preserves_selected_active_interface(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", False)
     monkeypatch.setattr(
         collector.psutil,
         "net_if_stats",
@@ -183,7 +185,7 @@ def test_network_worker_preserves_selected_active_interface(monkeypatch) -> None
     monkeypatch.setattr(
         collector,
         "choose_default_interface",
-        lambda: "Wi-Fi",
+        lambda _snapshot=None: "Wi-Fi",
     )
     worker = collector.NetworkWorker(AppConfig(interface="Ethernet"))
 
@@ -191,6 +193,7 @@ def test_network_worker_preserves_selected_active_interface(monkeypatch) -> None
 
 
 def test_network_worker_falls_back_when_saved_interface_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", False)
     monkeypatch.setattr(
         collector.psutil,
         "net_if_stats",
@@ -199,7 +202,7 @@ def test_network_worker_falls_back_when_saved_interface_is_unavailable(monkeypat
     monkeypatch.setattr(
         collector,
         "choose_default_interface",
-        lambda: "Wi-Fi",
+        lambda _snapshot=None: "Wi-Fi",
     )
     worker = collector.NetworkWorker(AppConfig(interface="Ethernet"))
 
@@ -253,6 +256,8 @@ def test_unconnected_udp_sockets_are_counted_without_inventing_remote_peers(monk
 
 
 def test_process_names_are_resolved_in_one_cached_process_table_pass(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", False)
+    monkeypatch.setattr(collector, "NATIVE_PROCESS_NAMES", False)
     class FakeProcess:
         def __init__(self, process_id: int, name: str):
             self.info = {"pid": process_id, "name": name}
@@ -278,6 +283,74 @@ def test_process_names_are_resolved_in_one_cached_process_table_pass(monkeypatch
     assert collector._process_name(202) == "game.exe"
     assert set(collector._PROCESS_NAME_CACHE) == {101, 202}
 
+
+
+def test_native_interface_snapshot_is_used_without_psutil_enumeration(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
+    monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", True)
+    expected = {
+        "Wi-Fi": {"is_up": True, "bytes_sent": 1200, "bytes_recv": 3400},
+        "Loopback Pseudo-Interface 1": {
+            "is_up": True, "bytes_sent": 0, "bytes_recv": 0,
+        },
+    }
+    monkeypatch.setattr(collector, "list_network_interfaces", lambda: expected)
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_if_stats",
+        lambda: (_ for _ in ()).throw(AssertionError("psutil adapter enumeration was used")),
+    )
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_io_counters",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("psutil counters were used")),
+    )
+
+    assert collector._read_interface_snapshot() == expected
+    assert collector.available_interfaces() == sorted(expected)
+
+
+def test_interface_snapshot_falls_back_to_psutil(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", False)
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_if_stats",
+        lambda: {"Ethernet": SimpleNamespace(isup=True)},
+    )
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_io_counters",
+        lambda pernic=True: {
+            "Ethernet": SimpleNamespace(bytes_sent=100, bytes_recv=200),
+        },
+    )
+    assert collector._read_interface_snapshot() == {
+        "Ethernet": {"is_up": True, "bytes_sent": 100, "bytes_recv": 200}
+    }
+
+
+def test_process_name_cache_uses_native_batch_lookup(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
+    monkeypatch.setattr(collector, "NATIVE_PROCESS_NAMES", True)
+    calls: list[list[int]] = []
+
+    def resolve(pids: list[int]) -> dict[int, str]:
+        calls.append(pids)
+        return {101: "browser.exe"}
+
+    monkeypatch.setattr(collector, "resolve_process_names", resolve)
+    monkeypatch.setattr(
+        collector.psutil,
+        "process_iter",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("the Python process iterator should not be used")
+        ),
+    )
+    collector._PROCESS_NAME_CACHE.clear()
+    collector._warm_process_name_cache([101, 202, 101])
+    assert calls == [[101, 202]]
+    assert collector._process_name(101) == "browser.exe"
+    assert collector._process_name(202) is None
 
 
 def test_geoip_enrichment_looks_up_each_unique_ip_once() -> None:
