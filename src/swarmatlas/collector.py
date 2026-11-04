@@ -702,8 +702,10 @@ class NetworkWorker(QThread):
 
                 if now_mono - last_endpoint_scan >= ENDPOINT_SCAN_INTERVAL_SEC:
                     scan_started = time.perf_counter()
+                    scanned_endpoint_count = 0
                     try:
                         endpoints, endpoint_stats = collect_public_endpoint_snapshot()
+                        scanned_endpoint_count = len(endpoints)
                         _enrich_endpoints_with_geoip(endpoints, locator)
                         store.update_destinations(endpoints, now_wall)
                         cached_destination_summary = store.destination_summary(now_wall)
@@ -741,7 +743,7 @@ class NetworkWorker(QThread):
                     _LOGGER.debug(
                         "Endpoint scan completed in %.1f ms (%d public endpoints)",
                         scan_duration_ms,
-                        len(endpoints) if "endpoints" in locals() else 0,
+                        scanned_endpoint_count,
                     )
                     last_endpoint_scan = now_mono
 
