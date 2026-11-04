@@ -148,3 +148,23 @@ def test_2ip_monthly_free_budget_has_headroom() -> None:
         assert locator._minimum_interval() >= 1 / 3
     finally:
         locator.close()
+
+
+def test_ipdata_current_documented_root_level_asn_response() -> None:
+    result = _normalize(
+        "ipdata",
+        {
+            "city": "Syracuse",
+            "region": "New York",
+            "country_name": "United States",
+            "country_code": "US",
+            "latitude": 43.0483,
+            "longitude": -76.1468,
+            "asn": "AS15169",
+            "name": "Google LLC",
+        },
+    )
+    assert result["asn"] == 15169
+    assert result["organization"] == "Google LLC"
+    assert result["country_code"] == "US"
+    assert result["city"] == "Syracuse"
