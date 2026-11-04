@@ -19,7 +19,10 @@ impl Drop for MibTable {
 }
 
 fn decode_alias(value: &[u16]) -> String {
-    let length = value.iter().position(|character| *character == 0).unwrap_or(value.len());
+    let length = value
+        .iter()
+        .position(|character| *character == 0)
+        .unwrap_or(value.len());
     String::from_utf16_lossy(&value[..length])
 }
 
@@ -37,7 +40,9 @@ pub(crate) fn list_network_interfaces() -> Result<Vec<NetworkInterface>, String>
     let table = MibTable(raw_table);
     let count = unsafe { (*table.0).NumEntries as usize };
     if count > 4096 {
-        return Err(format!("GetIfTable2 returned an unexpected interface count ({count})"));
+        return Err(format!(
+            "GetIfTable2 returned an unexpected interface count ({count})"
+        ));
     }
 
     // Taking the flexible-array field address preserves the padding required by the Windows ABI.

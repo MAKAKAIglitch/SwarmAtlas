@@ -13,13 +13,18 @@ struct ProcessSnapshot(*mut core::ffi::c_void);
 impl Drop for ProcessSnapshot {
     fn drop(&mut self) {
         if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
-            unsafe { CloseHandle(self.0); }
+            unsafe {
+                CloseHandle(self.0);
+            }
         }
     }
 }
 
 fn decode_process_name(value: &[u16]) -> String {
-    let length = value.iter().position(|character| *character == 0).unwrap_or(value.len());
+    let length = value
+        .iter()
+        .position(|character| *character == 0)
+        .unwrap_or(value.len());
     String::from_utf16_lossy(&value[..length])
 }
 
@@ -32,13 +37,17 @@ pub(crate) fn resolve_process_names(process_ids: &[u32]) -> Result<Vec<ProcessNa
         return Ok(Vec::new());
     }
     if missing.len() > MAX_PROCESS_IDS {
-        return Err(format!("process lookup is limited to {MAX_PROCESS_IDS} unique PIDs per call"));
+        return Err(format!(
+            "process lookup is limited to {MAX_PROCESS_IDS} unique PIDs per call"
+        ));
     }
 
     let raw_snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if raw_snapshot == INVALID_HANDLE_VALUE {
         let error = unsafe { GetLastError() };
-        return Err(format!("CreateToolhelp32Snapshot failed with Windows error {error}"));
+        return Err(format!(
+            "CreateToolhelp32Snapshot failed with Windows error {error}"
+        ));
     }
     let snapshot = ProcessSnapshot(raw_snapshot);
 
