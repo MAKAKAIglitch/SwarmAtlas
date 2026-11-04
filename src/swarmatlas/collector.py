@@ -29,7 +29,7 @@ COUNTER_SAMPLE_INTERVAL_SEC = 1.0
 ENDPOINT_SCAN_INTERVAL_SEC = 5.0
 HISTORY_SAMPLE_INTERVAL_SEC = 10.0
 MAX_TRACKED_ENDPOINTS = 2000
-PROCESS_NAME_CACHE_LIMIT = 512
+PROCESS_NAME_CACHE_LIMIT = 4096
 PROCESS_NAME_CACHE_TTL_SEC = 30.0
 
 VIRTUAL_MARKERS = (
@@ -101,6 +101,60 @@ def _process_name(process_id: int | None) -> str | None:
 
     _PROCESS_NAME_CACHE[process_id] = (now, name)
     return name
+
+
+def _warm_process_name_cache(process_ids: Any) -> None:
+    """Resolve uncached PIDs in one process-table pass instead of opening each PID separately."""
+    now = time.monotonic()
+    requested = {
+        int(process_id)
+        for process_id in process_ids
+        if process_id is not None and int(process_id) > 0
+    }
+    if not requested:
+        return
+
+    expired = [
+        pid for pid, (checked_at, _) in _PROCESS_NAME_CACHE.items()
+        if now - checked_at >= PROCESS_NAME_CACHE_TTL_SEC
+    ]
+    for pid in expired:
+        _PROCESS_NAME_CACHE.pop(pid, None)
+
+    missing = {
+        pid for pid in requested
+        if pid not in _PROCESS_NAME_CACHE
+    }
+    if not missing:
+        return
+
+    try:
+        processes = psutil.process_iter(attrs=["pid", "name"])
+        for process in processes:
+            try:
+                info = process.info
+                pid = int(info.get("pid") or 0)
+                if pid not in missing:
+                    continue
+                name = info.get("name")
+                _PROCESS_NAME_CACHE[pid] = (
+                    now,
+                    str(name) if name else None,
+                )
+                missing.remove(pid)
+                if not missing:
+                    break
+            except (psutil.Error, OSError, AttributeError, TypeError, ValueError):
+                continue
+    except (psutil.Error, OSError):
+        # Fall back to the per-PID resolver below when process enumeration is restricted.
+        return
+
+    for pid in missing:
+        _PROCESS_NAME_CACHE[pid] = (now, None)
+
+    while len(_PROCESS_NAME_CACHE) > PROCESS_NAME_CACHE_LIMIT:
+        _PROCESS_NAME_CACHE.pop(next(iter(_PROCESS_NAME_CACHE)), None)
 
 
 def _address_parts(value: Any) -> tuple[str, int] | None:
@@ -227,6 +281,7 @@ def collect_public_endpoint_snapshot(
         native_ok = False
         try:
             tcp_rows = list_tcp_connections(limit=max_items)
+            _warm_process_name_cache(item.get("process_id") for item in tcp_rows)
             native_ok = True
             for item in tcp_rows:
                 parsed = _parse_remote((item["ip"], item["port"]))
@@ -265,6 +320,9 @@ def collect_public_endpoint_snapshot(
                 except psutil.Error:
                     fallback_tcp = []
 
+                _warm_process_name_cache(
+                    getattr(connection, "pid", None) for connection in fallback_tcp
+                )
                 for connection in fallback_tcp:
                     parsed = _parse_remote(connection.raddr)
                     if parsed is None:
@@ -299,6 +357,15 @@ def collect_public_endpoint_snapshot(
                 if udp_binding_error is None:
                     udp_binding_error = f"{type(exc).__name__}: {exc}"
 
+            udp_owner_pids = (
+                process_id
+                for matches in udp_by_port.values()
+                for process_id in matches
+            )
+            _warm_process_name_cache(
+                [getattr(connection, "pid", None) for connection in udp_connections]
+                + list(udp_owner_pids)
+            )
             for connection in udp_connections:
                 parsed = _parse_remote(connection.raddr)
                 if parsed is None:
@@ -340,6 +407,9 @@ def collect_public_endpoint_snapshot(
     connections = psutil.net_connections(kind="inet")
     udp_binding_count = sum(
         1 for connection in connections if connection.type == socket.SOCK_DGRAM
+    )
+    _warm_process_name_cache(
+        getattr(connection, "pid", None) for connection in connections
     )
     for connection in connections:
         parsed = _parse_remote(connection.raddr)
