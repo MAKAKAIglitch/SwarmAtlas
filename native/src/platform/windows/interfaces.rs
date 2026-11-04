@@ -4,6 +4,7 @@ use std::ptr::{addr_of, null_mut};
 use windows_sys::Win32::NetworkManagement::IpHelper::{
     FreeMibTable, GetIfTable2, MIB_IF_ROW2, MIB_IF_TABLE2,
 };
+use windows_sys::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 
 pub(crate) type NetworkInterface = (String, bool, u64, u64);
 
@@ -48,7 +49,7 @@ pub(crate) fn list_network_interfaces() -> Result<Vec<NetworkInterface>, String>
         if alias.is_empty() {
             continue;
         }
-        result.push((alias, row.OperStatus == 1, row.OutOctets, row.InOctets));
+        result.push((alias, row.OperStatus == IfOperStatusUp, row.OutOctets, row.InOctets));
     }
     Ok(result)
 }
