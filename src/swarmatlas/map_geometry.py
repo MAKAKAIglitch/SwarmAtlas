@@ -43,34 +43,37 @@ def _segment_distance_squared(
     return px * px + py * py
 
 
-def simplify_projected_ring(
+def _radial_filter_projected(
     points: Sequence[tuple[float, float]],
-    tolerance: float = DEFAULT_SIMPLIFICATION_TOLERANCE,
+    tolerance: float,
 ) -> list[tuple[float, float]]:
-    """Douglas-Peucker simplification in projected world coordinates."""
     if len(points) <= 2 or tolerance <= 0:
         return list(points)
 
-    # A cheap linear radial pass removes dense, nearly coincident shapefile
-    # vertices before Douglas-Peucker. The smaller pre-filter tolerance keeps
-    # the combined visual error below the configured simplification tolerance.
-    radial_tolerance = tolerance * 0.25
-    radial_threshold = radial_tolerance * radial_tolerance
+    threshold = tolerance * tolerance
     radial = [points[0]]
-    last = points[0]
-    for point in points[1:-1]:
-        dx = point[0] - last[0]
-        dy = point[1] - last[1]
-        if dx * dx + dy * dy >= radial_threshold:
-            radial.append(point)
-            last = point
-    if points[-1] != radial[-1]:
-        radial.append(points[-1])
-    if len(radial) <= 2:
-        return radial
+    last_x, last_y = points[0]
+    for x, y in points[1:-1]:
+        dx = x - last_x
+        dy = y - last_y
+        if dx * dx + dy * dy >= threshold:
+            radial.append((x, y))
+            last_x, last_y = x, y
 
-    points = radial
-    threshold = (tolerance * 0.75) ** 2
+    final = points[-1]
+    if final != radial[-1]:
+        radial.append(final)
+    return radial
+
+
+def _douglas_peucker(
+    points: Sequence[tuple[float, float]],
+    tolerance: float,
+) -> list[tuple[float, float]]:
+    if len(points) <= 2 or tolerance <= 0:
+        return list(points)
+
+    threshold = tolerance * tolerance
     keep = bytearray(len(points))
     keep[0] = 1
     keep[-1] = 1
@@ -97,6 +100,50 @@ def simplify_projected_ring(
     return [point for index, point in enumerate(points) if keep[index]]
 
 
+def simplify_projected_ring(
+    points: Sequence[tuple[float, float]],
+    tolerance: float = DEFAULT_SIMPLIFICATION_TOLERANCE,
+) -> list[tuple[float, float]]:
+    """Radial pre-filter followed by iterative Douglas-Peucker simplification."""
+    if len(points) <= 2 or tolerance <= 0:
+        return list(points)
+
+    # Divide the error budget between the fast radial pass and Douglas-Peucker.
+    radial = _radial_filter_projected(points, tolerance * 0.25)
+    if len(radial) <= 2:
+        return radial
+    return _douglas_peucker(radial, tolerance * 0.75)
+
+
+def _project_and_simplify_ring(
+    points: Sequence[tuple[float, float]],
+    tolerance: float,
+) -> list[tuple[float, float]]:
+    """Project geographic vertices while radial-filtering, avoiding a full extra list."""
+    if len(points) <= 2 or tolerance <= 0:
+        return [_project(float(lon), float(lat)) for lon, lat in points]
+
+    radial_threshold = (tolerance * 0.25) ** 2
+    first = _project(float(points[0][0]), float(points[0][1]))
+    radial = [first]
+    last_x, last_y = first
+
+    for longitude, latitude in points[1:-1]:
+        x, y = _project(float(longitude), float(latitude))
+        dx = x - last_x
+        dy = y - last_y
+        if dx * dx + dy * dy >= radial_threshold:
+            radial.append((x, y))
+            last_x, last_y = x, y
+
+    final = _project(float(points[-1][0]), float(points[-1][1]))
+    if final != radial[-1]:
+        radial.append(final)
+
+    if len(radial) <= 2:
+        return radial
+    return _douglas_peucker(radial, tolerance * 0.75)
+
 def _append_rings(
     path: QPainterPath,
     rings: Iterable[Sequence[tuple[float, float]]],
@@ -107,10 +154,7 @@ def _append_rings(
     for ring in rings:
         if len(ring) < (3 if close else 2):
             continue
-        projected = simplify_projected_ring(
-            [_project(float(longitude), float(latitude)) for longitude, latitude in ring],
-            tolerance,
-        )
+        projected = _project_and_simplify_ring(ring, tolerance)
         if len(projected) < (3 if close else 2):
             continue
 
