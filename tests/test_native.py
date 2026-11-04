@@ -18,6 +18,7 @@ def test_native_extension_reports_read_only_windows_capabilities() -> None:
     assert "tcp-public-endpoints" in capabilities
     assert "udp-socket-count" in capabilities
     assert "udp-owner-pid" in capabilities
+    assert "map-geometry-v1" in capabilities
     assert "ipv4" in capabilities
     assert "ipv6" in capabilities
 
@@ -49,6 +50,42 @@ def test_native_connection_tables_return_valid_rows() -> None:
         assert int(row[2]) >= 0
 
 
+def test_native_geometry_matches_the_python_reference() -> None:
+    if not native_adapter.NATIVE_MAP_GEOMETRY:
+        pytest.skip("Installed Rust extension does not expose map geometry.")
+
+    from swarmatlas.map_geometry import _project_and_simplify_ring
+
+    rings = [
+        [
+            (-120.0 + index * 0.001, 35.0 + (0.00001 if index % 2 else 0.0))
+            for index in range(500)
+        ],
+        [(-10.0, -10.0), (10.0, -10.0), (10.0, 10.0), (-10.0, 10.0), (-10.0, -10.0)],
+        [(0.0, 90.0), (10.0, 90.0), (20.0, 90.0)],
+        [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)],
+    ]
+    tolerance = 0.00001
+
+    actual = native_adapter.project_and_simplify_rings(rings, tolerance)
+    expected = [_project_and_simplify_ring(ring, tolerance) for ring in rings]
+
+    assert actual is not None
+    assert len(actual) == len(expected)
+    for actual_ring, expected_ring in zip(actual, expected):
+        assert len(actual_ring) == len(expected_ring)
+        for actual_point, expected_point in zip(actual_ring, expected_ring):
+            assert actual_point == pytest.approx(expected_point, abs=1e-12)
+
+
+def test_native_geometry_rejects_invalid_tolerances() -> None:
+    if not native_adapter.NATIVE_MAP_GEOMETRY:
+        pytest.skip("Installed Rust extension does not expose map geometry.")
+    with pytest.raises(ValueError):
+        native_adapter.project_and_simplify_rings([[(0.0, 0.0)]], float("nan"))
+    with pytest.raises(ValueError):
+        native_adapter.project_and_simplify_rings([[(0.0, 0.0)]], -1.0)
+
 
 def test_python_adapter_passes_display_limit_to_rust(monkeypatch) -> None:
     calls: list[int] = []
@@ -67,7 +104,6 @@ def test_python_adapter_passes_display_limit_to_rust(monkeypatch) -> None:
     assert rows[0]["ip"] == "8.8.8.8"
 
 
-
 def test_python_adapter_keeps_legacy_scan_for_pre_refactor_core(monkeypatch) -> None:
     calls: list[int] = []
     fake = SimpleNamespace(
@@ -83,7 +119,6 @@ def test_python_adapter_keeps_legacy_scan_for_pre_refactor_core(monkeypatch) -> 
 
     assert calls == [50_000]
     assert len(rows) == 1
-
 
 
 def test_current_native_adapter_skips_duplicate_ip_range_classification(monkeypatch) -> None:
@@ -107,7 +142,6 @@ def test_current_native_adapter_skips_duplicate_ip_range_classification(monkeypa
     rows = native_adapter.list_tcp_connections(limit=10)
 
     assert rows[0]["ip"] == "8.8.8.8"
-
 
 
 def test_native_udp_count_uses_compact_rust_counter_when_available(monkeypatch) -> None:

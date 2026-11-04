@@ -6,10 +6,17 @@ from collections.abc import Iterable, Sequence
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainterPath
 
+from .native import NATIVE_MAP_GEOMETRY, project_and_simplify_rings
+
 
 MERCATOR_MAX_LAT = 85.0511287798066
 # At the map's maximum zoom this tolerance remains well below one screen pixel.
 DEFAULT_SIMPLIFICATION_TOLERANCE = 0.00001
+
+# Bound both Python-to-Rust conversion cost and temporary memory. A single
+# unusually large ring is still processed as one batch item.
+NATIVE_BATCH_MAX_RINGS = 128
+NATIVE_BATCH_MAX_POINTS = 16_384
 
 
 def _project(longitude: float, latitude: float) -> tuple[float, float]:
@@ -120,7 +127,7 @@ def _project_and_simplify_ring(
     points: Sequence[tuple[float, float]],
     tolerance: float,
 ) -> list[tuple[float, float]]:
-    """Project geographic vertices while radial-filtering, avoiding a full extra list."""
+    """Python compatibility implementation used when the Rust core is absent."""
     if len(points) <= 2 or tolerance <= 0:
         return [_project(float(lon), float(lat)) for lon, lat in points]
 
@@ -146,7 +153,24 @@ def _project_and_simplify_ring(
         return radial
     return _douglas_peucker(radial, tolerance * 0.75)
 
-def _append_rings(
+
+def _append_projected_ring(
+    path: QPainterPath,
+    projected: Sequence[tuple[float, float]],
+    *,
+    close: bool,
+) -> None:
+    if len(projected) < (3 if close else 2):
+        return
+
+    path.moveTo(*projected[0])
+    for x, y in projected[1:]:
+        path.lineTo(x, y)
+    if close:
+        path.closeSubpath()
+
+
+def _append_rings_python(
     path: QPainterPath,
     rings: Iterable[Sequence[tuple[float, float]]],
     *,
@@ -157,14 +181,51 @@ def _append_rings(
         if len(ring) < (3 if close else 2):
             continue
         projected = _project_and_simplify_ring(ring, tolerance)
-        if len(projected) < (3 if close else 2):
-            continue
+        _append_projected_ring(path, projected, close=close)
 
-        path.moveTo(*projected[0])
-        for x, y in projected[1:]:
-            path.lineTo(x, y)
-        if close:
-            path.closeSubpath()
+
+def _append_rings_native(
+    path: QPainterPath,
+    rings: Iterable[Sequence[tuple[float, float]]],
+    *,
+    close: bool,
+    tolerance: float,
+) -> None:
+    batch: list[Sequence[tuple[float, float]]] = []
+    point_count = 0
+
+    def flush() -> None:
+        nonlocal point_count
+        if not batch:
+            return
+        projected_rings = project_and_simplify_rings(batch, tolerance)
+        if projected_rings is None:
+            # Capability may disappear only if the optional extension is
+            # unavailable; keep a safe compatibility path for that case.
+            for ring in batch:
+                _append_projected_ring(
+                    path,
+                    _project_and_simplify_ring(ring, tolerance),
+                    close=close,
+                )
+        else:
+            for projected in projected_rings:
+                _append_projected_ring(path, projected, close=close)
+        batch.clear()
+        point_count = 0
+
+    minimum = 3 if close else 2
+    for ring in rings:
+        if len(ring) < minimum:
+            continue
+        batch.append(ring)
+        point_count += len(ring)
+        if (
+            len(batch) >= NATIVE_BATCH_MAX_RINGS
+            or point_count >= NATIVE_BATCH_MAX_POINTS
+        ):
+            flush()
+    flush()
 
 
 def build_boundary_paths(
@@ -173,11 +234,12 @@ def build_boundary_paths(
     *,
     tolerance: float = DEFAULT_SIMPLIFICATION_TOLERANCE,
 ) -> tuple[QPainterPath, QPainterPath]:
-    """Build render-ready paths off the GUI thread and discard sub-pixel vertices."""
+    """Build render-ready paths, using bounded Rust batches when available."""
     country_path = QPainterPath()
     country_path.setFillRule(Qt.FillRule.OddEvenFill)
     region_path = QPainterPath()
 
-    _append_rings(country_path, countries, close=True, tolerance=tolerance)
-    _append_rings(region_path, regions, close=True, tolerance=tolerance)
+    append = _append_rings_native if NATIVE_MAP_GEOMETRY else _append_rings_python
+    append(country_path, countries, close=True, tolerance=tolerance)
+    append(region_path, regions, close=True, tolerance=tolerance)
     return country_path, region_path

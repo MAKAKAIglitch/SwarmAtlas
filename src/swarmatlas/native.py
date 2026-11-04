@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
-from typing import Any
+from typing import Any, Sequence
 
 
 NATIVE_TCP_LEGACY_SCAN_LIMIT = 50_000
@@ -12,6 +12,7 @@ NATIVE_AVAILABLE = False
 NATIVE_VERSION = ""
 NATIVE_LOAD_ERROR = ""
 NATIVE_CAPABILITIES: frozenset[str] = frozenset()
+NATIVE_MAP_GEOMETRY = False
 
 try:
     import _swarmatlas_native as candidate
@@ -30,6 +31,9 @@ try:
     NATIVE_AVAILABLE = True
     NATIVE_VERSION = str(getattr(candidate, "__version__", "unknown"))
     NATIVE_CAPABILITIES = capabilities
+    NATIVE_MAP_GEOMETRY = "map-geometry-v1" in capabilities and callable(
+        getattr(candidate, "project_and_simplify_rings", None)
+    )
 except Exception as exc:
     # An incompatible or partially installed extension must never prevent the
     # Python collector and the rest of the desktop application from starting.
@@ -38,13 +42,25 @@ except Exception as exc:
     NATIVE_VERSION = ""
     NATIVE_LOAD_ERROR = type(exc).__name__
     NATIVE_CAPABILITIES = frozenset()
+    NATIVE_MAP_GEOMETRY = False
 
 
 def backend_status() -> str:
     if NATIVE_AVAILABLE:
-        return f"Rust monitor active ({NATIVE_VERSION})"
+        suffix = " · native map geometry" if NATIVE_MAP_GEOMETRY else ""
+        return f"Rust monitor active ({NATIVE_VERSION}){suffix}"
     reason = f" ({NATIVE_LOAD_ERROR})" if NATIVE_LOAD_ERROR else ""
     return f"Rust monitor unavailable{reason}; using the Python compatibility collector"
+
+
+def project_and_simplify_rings(
+    rings: Sequence[Sequence[tuple[float, float]]],
+    tolerance: float,
+) -> list[list[tuple[float, float]]] | None:
+    """Run a bounded batch of map rings in the Rust geometry core, if available."""
+    if not NATIVE_MAP_GEOMETRY or _native is None:
+        return None
+    return _native.project_and_simplify_rings(rings, float(tolerance))
 
 
 def list_tcp_connections(limit: int = 2000) -> list[dict[str, Any]]:
