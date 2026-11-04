@@ -32,7 +32,7 @@ The app should run as a normal Windows user. It must not request administrator p
 
 The default DB-IP Lite mode performs local address lookups after its static MMDB file has been downloaded. The observed destination IPs are not sent to DB-IP or Natural Earth for those lookups.
 
-Online GeoIP is opt-in and sends the selected public destination IP to exactly one configured provider:
+Online GeoIP is opt-in and sends the selected public destination IP to exactly one configured provider. The provider also sees the user's public source IP as the normal source of the HTTPS/HTTP request (and the account token when required):
 - IP-API.com (free endpoint: HTTP, non-commercial use only);
 - ipdata.co;
 - ipapi.is;
