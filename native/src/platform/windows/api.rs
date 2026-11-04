@@ -157,6 +157,16 @@ pub(super) unsafe fn query_udp_rows<T: Copy>(
     query_rows(GetExtendedUdpTable, family, table_class, limit, name)
 }
 
+pub(super) unsafe fn query_udp_rows_with<T: Copy, R>(
+    family: u32,
+    table_class: i32,
+    limit: usize,
+    name: &str,
+    visitor: impl FnOnce(&[T]) -> R,
+) -> Result<R, String> {
+    query_rows_with(GetExtendedUdpTable, family, table_class, limit, name, visitor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::decode_port;
