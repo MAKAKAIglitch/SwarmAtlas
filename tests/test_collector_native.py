@@ -63,7 +63,7 @@ def test_native_path_keeps_multiple_processes_connected_to_same_ip(monkeypatch) 
             },
         ],
     )
-    monkeypatch.setattr(collector, "list_udp_bindings", lambda: [])
+    monkeypatch.setattr(collector, "count_udp_bindings", lambda: 0)
     monkeypatch.setattr(collector.psutil, "net_connections", lambda kind="udp": [])
     collector._PROCESS_NAME_CACHE.clear()
 
@@ -178,7 +178,7 @@ def test_network_worker_falls_back_when_saved_interface_is_unavailable(monkeypat
 def test_native_empty_result_falls_back_to_psutil_tcp_table(monkeypatch) -> None:
     monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
     monkeypatch.setattr(collector, "list_tcp_connections", lambda limit=2000: [])
-    monkeypatch.setattr(collector, "list_udp_bindings", lambda: [])
+    monkeypatch.setattr(collector, "count_udp_bindings", lambda: 0)
     monkeypatch.setattr(
         collector.psutil,
         "net_connections",
