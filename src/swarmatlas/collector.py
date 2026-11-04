@@ -13,8 +13,7 @@ from PySide6.QtCore import QThread, Signal
 from .config import AppConfig, database_path
 from .geoip import GeoLocator
 from .geoip_data import ensure_default_geoip_database
-from .map_data import load_world_boundaries
-from .map_geometry import build_boundary_paths
+from .map_data import load_world_boundary_paths
 from .native import (
     NATIVE_AVAILABLE,
     NATIVE_CAPABILITIES,
@@ -535,12 +534,12 @@ class NetworkWorker(QThread):
             # Once cached, the map works offline on every later launch.
             try:
                 map_started = time.perf_counter()
-                countries, regions = load_world_boundaries(
+                # Stream one shapefile ring at a time into simplified Qt paths.
+                # This avoids retaining all raw Natural Earth coordinates before
+                # allocating the renderable geometry.
+                country_path, region_path = load_world_boundary_paths(
                     progress=lambda message: self.status_changed.emit(message)
                 )
-                # Polygon projection and path construction can touch hundreds of
-                # thousands of vertices. Keep all of that work off the Qt UI thread.
-                country_path, region_path = build_boundary_paths(countries, regions)
                 _LOGGER.info(
                     "Prepared map geometry off-thread in %.1f ms "
                     "(%d country, %d region path elements)",
