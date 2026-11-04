@@ -15,6 +15,7 @@ from .config import AppConfig, database_path
 from .geoip import GeoLocator
 from .geoip_data import ensure_default_geoip_database
 from .map_data import load_world_boundaries
+from .map_geometry import build_boundary_paths
 from .native import NATIVE_AVAILABLE, backend_status, list_tcp_connections, list_udp_bindings
 from .storage import Store
 from .theme import resolve_language
@@ -493,7 +494,15 @@ class NetworkWorker(QThread):
                 countries, regions = load_world_boundaries(
                     progress=lambda message: self.status_changed.emit(message)
                 )
-                self.map_data_ready.emit(countries, regions)
+                # Polygon projection and path construction can touch hundreds of
+                # thousands of vertices. Keep all of that work off the Qt UI thread.
+                country_path, region_path = build_boundary_paths(countries, regions)
+                _LOGGER.info(
+                    "Prepared map geometry off-thread (%d country, %d region path elements)",
+                    country_path.elementCount(),
+                    region_path.elementCount(),
+                )
+                self.map_data_ready.emit(country_path, region_path)
                 self.status_changed.emit("Country and region map ready")
             except Exception as exc:
                 _LOGGER.exception("Could not load offline Natural Earth country/region boundaries")
