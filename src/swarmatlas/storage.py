@@ -435,7 +435,7 @@ class Store:
                        connection_state, country_code, country, region, city,
                        asn, organization, isp, latitude, longitude, last_seen
                 FROM destinations
-                WHERE active = 1 AND last_seen >= ?
+                WHERE last_seen >= ?
                 ORDER BY last_seen DESC
                 LIMIT 1000
                 """,
@@ -445,7 +445,7 @@ class Store:
                 """
                 SELECT country_code, country, COUNT(DISTINCT ip) AS peers
                 FROM destinations
-                WHERE active = 1 AND last_seen >= ? AND country IS NOT NULL
+                WHERE last_seen >= ? AND country IS NOT NULL
                 GROUP BY country_code, country
                 ORDER BY peers DESC
                 LIMIT 12
@@ -456,7 +456,7 @@ class Store:
                 """
                 SELECT country, region, COUNT(DISTINCT ip) AS peers
                 FROM destinations
-                WHERE active = 1 AND last_seen >= ?
+                WHERE last_seen >= ?
                   AND region IS NOT NULL AND region <> ''
                 GROUP BY country, region
                 ORDER BY peers DESC, country, region
