@@ -433,14 +433,10 @@ class Store:
                     [tuple(row) for row in victims],
                 )
 
-    def summary(self, interface: str, now: float | None = None) -> dict[str, Any]:
+    def destination_summary(self, now: float | None = None) -> dict[str, Any]:
+        """Load the slower-changing endpoint, country and region views."""
         current = now if now is not None else time.time()
         with self._lock:
-            state = self._db.execute(
-                "SELECT upload_total, download_total FROM interface_state WHERE interface = ?",
-                (interface,),
-            ).fetchone()
-            totals = dict(state) if state else {"upload_total": 0, "download_total": 0}
             destinations = self._db.execute(
                 """
                 SELECT recent.ip, recent.port, recent.protocol, recent.process_id,
@@ -490,6 +486,22 @@ class Store:
                 """,
                 (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
             ).fetchall()
+
+        return {
+            "active_endpoints": [dict(row) for row in destinations],
+            "countries": [dict(row) for row in countries],
+            "regions": [dict(row) for row in regions],
+        }
+
+    def summary(self, interface: str, now: float | None = None) -> dict[str, Any]:
+        """Compatibility snapshot for callers that need totals and history too."""
+        current = now if now is not None else time.time()
+        with self._lock:
+            state = self._db.execute(
+                "SELECT upload_total, download_total FROM interface_state WHERE interface = ?",
+                (interface,),
+            ).fetchone()
+            totals = dict(state) if state else {"upload_total": 0, "download_total": 0}
             samples = self._db.execute(
                 """
                 SELECT timestamp, upload_bps, download_bps
@@ -502,9 +514,7 @@ class Store:
 
         return {
             **totals,
-            "active_endpoints": [dict(row) for row in destinations],
-            "countries": [dict(row) for row in countries],
-            "regions": [dict(row) for row in regions],
+            **self.destination_summary(current),
             "samples": [dict(row) for row in samples],
         }
 
