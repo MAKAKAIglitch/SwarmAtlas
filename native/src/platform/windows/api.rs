@@ -138,15 +138,6 @@ unsafe fn query_rows<T: Copy>(
     query_rows_with(query, family, table_class, limit, name, |rows| rows.to_vec())
 }
 
-pub(super) unsafe fn query_tcp_rows<T: Copy>(
-    family: u32,
-    table_class: i32,
-    limit: usize,
-    name: &str,
-) -> Result<Vec<T>, String> {
-    query_rows(GetExtendedTcpTable, family, table_class, limit, name)
-}
-
 pub(super) unsafe fn query_tcp_rows_with<T: Copy, R>(
     family: u32,
     table_class: i32,
