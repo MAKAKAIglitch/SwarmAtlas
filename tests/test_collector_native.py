@@ -194,3 +194,39 @@ def test_native_empty_result_falls_back_to_psutil_tcp_table(monkeypatch) -> None
     assert endpoints[0]["ip"] == "8.8.8.8"
     assert endpoints[0]["protocol"] == "TCP"
     assert endpoints[0]["process_id"] == 4567
+
+
+
+def test_unconnected_udp_sockets_are_counted_without_inventing_remote_peers(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
+    monkeypatch.setattr(collector, "list_tcp_connections", lambda limit=2000: [])
+    monkeypatch.setattr(
+        collector,
+        "list_udp_bindings",
+        lambda: [
+            {"local_ip": "0.0.0.0", "local_port": 53000, "process_id": 100},
+            {"local_ip": "0.0.0.0", "local_port": 53001, "process_id": 200},
+        ],
+    )
+    udp_sockets = [
+        SimpleNamespace(
+            raddr=(),
+            laddr=Address("0.0.0.0", 53000 + index),
+            type=socket.SOCK_DGRAM,
+            pid=100 + index * 100,
+            status="",
+        )
+        for index in range(2)
+    ]
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_connections",
+        lambda kind="inet": udp_sockets if kind == "udp" else [],
+    )
+
+    endpoints, stats = collector.collect_public_endpoint_snapshot()
+
+    assert endpoints == []
+    assert stats["udp_local_sockets"] == 2
+    assert stats["udp_public_peers"] == 0
+    assert stats["udp_binding_error"] is None
