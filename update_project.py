@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -17,6 +18,18 @@ BRANCH = "main"
 ARCHIVE_URL = f"https://github.com/{REPOSITORY}/archive/refs/heads/{BRANCH}.zip"
 MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 250 * 1024 * 1024
+NATIVE_RELEASE_TAG = "native-latest"
+NATIVE_WHEEL_FILENAME = "swarmatlas_native-0.1.0-cp311-abi3-win_amd64.whl"
+NATIVE_WHEEL_URL = (
+    f"https://github.com/{REPOSITORY}/releases/download/"
+    f"{NATIVE_RELEASE_TAG}/{NATIVE_WHEEL_FILENAME}"
+)
+NATIVE_CHECKSUM_URL = (
+    f"https://github.com/{REPOSITORY}/releases/download/"
+    f"{NATIVE_RELEASE_TAG}/wheel.sha256"
+)
+MAX_NATIVE_WHEEL_BYTES = 32 * 1024 * 1024
+MAX_CHECKSUM_BYTES = 4096
 
 SKIP_PARTS = {
     ".git",
@@ -246,8 +259,112 @@ def refresh_dependencies(root: Path) -> bool:
 
 
 
+def download_limited_asset(url: str, destination: Path, maximum_bytes: int) -> None:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "SwarmAtlas-Updater/1.0",
+            "Accept": "application/octet-stream",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        length = response.headers.get("Content-Length")
+        if length and int(length) > maximum_bytes:
+            raise ValueError("Native release asset exceeds its allowed size.")
+
+        written = 0
+        with destination.open("wb") as output:
+            while True:
+                chunk = response.read(256 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > maximum_bytes:
+                    raise ValueError("Native release asset exceeded its allowed size.")
+                output.write(chunk)
+
+
+def verify_native_wheel(wheel_path: Path, manifest_text: str) -> None:
+    parts = manifest_text.strip().split()
+    if len(parts) != 2:
+        raise ValueError("The native wheel checksum manifest has an invalid format.")
+
+    expected_hash, asset_name = parts
+    if len(expected_hash) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in expected_hash):
+        raise ValueError("The native wheel checksum is not a valid SHA-256 digest.")
+    if Path(asset_name).name != NATIVE_WHEEL_FILENAME:
+        raise ValueError("The checksum manifest names an unexpected native wheel.")
+    if wheel_path.name != NATIVE_WHEEL_FILENAME:
+        raise ValueError("Downloaded native wheel filename does not match the expected asset.")
+
+    digest = hashlib.sha256()
+    with wheel_path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest().lower() != expected_hash.lower():
+        raise ValueError("Native wheel SHA-256 verification failed.")
+
+
+def install_prebuilt_native(root: Path, venv_python: Path) -> bool:
+    """Download a public, stable-ABI wheel and verify it before local installation."""
+    with tempfile.TemporaryDirectory(prefix="swarmatlas-native-") as temporary:
+        directory = Path(temporary)
+        wheel_path = directory / NATIVE_WHEEL_FILENAME
+        manifest_path = directory / "wheel.sha256"
+
+        say("[Updater] Downloading the latest prebuilt Rust core from GitHub Releases...")
+        download_limited_asset(
+            NATIVE_CHECKSUM_URL,
+            manifest_path,
+            MAX_CHECKSUM_BYTES,
+        )
+        download_limited_asset(
+            NATIVE_WHEEL_URL,
+            wheel_path,
+            MAX_NATIVE_WHEEL_BYTES,
+        )
+        verify_native_wheel(
+            wheel_path,
+            manifest_path.read_text(encoding="ascii"),
+        )
+
+        say("[Updater] Native wheel SHA-256 verified. Installing the local file...")
+        result = subprocess.run(
+            [
+                str(venv_python),
+                "-m",
+                "pip",
+                "install",
+                "--no-deps",
+                "--force-reinstall",
+                str(wheel_path),
+            ],
+            cwd=str(root),
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("pip could not install the verified native wheel.")
+
+        verification = subprocess.run(
+            [
+                str(venv_python),
+                "-c",
+                "import _swarmatlas_native as n; "
+                "assert 'read-only' in n.capabilities(); "
+                "print('Installed Rust core:', n.__version__)",
+            ],
+            cwd=str(root),
+            text=True,
+        )
+        if verification.returncode != 0:
+            raise RuntimeError("The newly installed native extension did not pass its import check.")
+
+    say("[Updater] Prebuilt Rust core updated successfully.")
+    return True
+
+
 def refresh_native_extension(root: Path) -> bool:
-    """Rebuild Rust only when it was already enabled by the user."""
+    """Update Rust only when the user has already enabled the optional extension."""
     venv_python = root / ".venv" / "Scripts" / "python.exe"
     scripts = root / ".venv" / "Scripts"
     maturin = scripts / "maturin.exe"
@@ -271,40 +388,57 @@ def refresh_native_extension(root: Path) -> bool:
 
     cargo = shutil.which("cargo")
     rustc = shutil.which("rustc")
-    if not cargo or not rustc:
-        say("[WARNING] A Rust extension is installed, but cargo/rustc is unavailable.")
-        say("[WARNING] Its existing binary was preserved; run build_native.bat to rebuild it.")
+    if cargo and rustc:
+        if not maturin.is_file():
+            say("[Updater] Installing the pinned local Rust build frontend...")
+            install = subprocess.run(
+                [str(venv_python), "-m", "pip", "install", "maturin==1.16.0"],
+                cwd=str(root),
+                text=True,
+            )
+            if install.returncode == 0 and maturin.is_file():
+                env = os.environ.copy()
+                env["VIRTUAL_ENV"] = str(root / ".venv")
+                env["PATH"] = str(scripts) + os.pathsep + env.get("PATH", "")
+                say("[Updater] Rebuilding the installed Rust core locally...")
+                build = subprocess.run(
+                    [str(maturin), "develop", "--release"],
+                    cwd=str(root / "native"),
+                    env=env,
+                    text=True,
+                )
+                if build.returncode == 0:
+                    say("[Updater] Rust monitoring core rebuilt successfully.")
+                    return True
+                say("[WARNING] Local Rust rebuild failed; trying the verified prebuilt wheel.")
+            else:
+                say("[WARNING] Could not prepare maturin; trying the verified prebuilt wheel.")
+        else:
+            env = os.environ.copy()
+            env["VIRTUAL_ENV"] = str(root / ".venv")
+            env["PATH"] = str(scripts) + os.pathsep + env.get("PATH", "")
+            say("[Updater] Rebuilding the installed Rust core locally...")
+            build = subprocess.run(
+                [str(maturin), "develop", "--release"],
+                cwd=str(root / "native"),
+                env=env,
+                text=True,
+            )
+            if build.returncode == 0:
+                say("[Updater] Rust monitoring core rebuilt successfully.")
+                return True
+            say("[WARNING] Local Rust rebuild failed; trying the verified prebuilt wheel.")
+    else:
+        say("[Updater] Rust compiler not found; using the prebuilt stable-ABI wheel.")
+
+    try:
+        return install_prebuilt_native(root, venv_python)
+    except (OSError, ValueError, urllib.error.URLError, RuntimeError) as exc:
+        say(f"[WARNING] Could not update the Rust core: {type(exc).__name__}: {exc}")
+        say("[WARNING] The existing native binary was left in place. Python fallback remains available.")
         return True
 
-    if not maturin.is_file():
-        say("[Updater] Installing the pinned Rust build frontend...")
-        install = subprocess.run(
-            [str(venv_python), "-m", "pip", "install", "maturin==1.16.0"],
-            cwd=str(root),
-            text=True,
-        )
-        if install.returncode != 0 or not maturin.is_file():
-            say("[WARNING] Could not prepare maturin; the existing Rust binary was preserved.")
-            return True
 
-    env = os.environ.copy()
-    env["VIRTUAL_ENV"] = str(root / ".venv")
-    env["PATH"] = str(scripts) + os.pathsep + env.get("PATH", "")
-
-    say("[Updater] Rebuilding the already-installed Rust monitoring core...")
-    build = subprocess.run(
-        [str(maturin), "develop", "--release"],
-        cwd=str(root / "native"),
-        env=env,
-        text=True,
-    )
-    if build.returncode != 0:
-        say("[WARNING] Rust rebuild did not complete; the previous native binary was preserved.")
-        say("[WARNING] Python and the current installed Rust extension remain available.")
-        return True
-
-    say("[Updater] Rust monitoring core rebuilt successfully.")
-    return True
 
 def main() -> int:
     root = Path(__file__).resolve().parent
