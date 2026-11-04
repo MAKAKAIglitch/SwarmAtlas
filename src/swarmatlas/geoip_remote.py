@@ -28,6 +28,7 @@ PROVIDER_NAMES = {
     "ipdata": "ipdata.co",
     "ipapi-is": "ipapi.is",
     "ipinfo-lite": "IPinfo Lite",
+    "ip2location": "IP2Location.io",
     "2ip": "2ip.io",
 }
 
@@ -119,6 +120,18 @@ def _normalize(provider: str, data: dict[str, Any]) -> dict[str, Any]:
             "organization": data.get("as_name"),
             "asn": _asn_number(data.get("asn")),
         })
+    elif provider == "ip2location":
+        result.update({
+            "country": data.get("country_name"),
+            "country_code": data.get("country_code"),
+            "region": data.get("region_name"),
+            "city": data.get("city_name"),
+            "latitude": _number(data.get("latitude")),
+            "longitude": _number(data.get("longitude")),
+            "isp": data.get("isp"),
+            "organization": data.get("as"),
+            "asn": _asn_number(data.get("asn")),
+        })
     elif provider == "2ip":
         asn = data.get("asn") if isinstance(data.get("asn"), dict) else {}
         result.update({
@@ -173,6 +186,10 @@ class RemoteGeoLocator:
         name = PROVIDER_NAMES[self.provider]
         if self.provider == "ipinfo-lite" and not self.api_key:
             return f"{name}: API token required; country and ASN data only"
+        if self.provider == "ip2location" and not self.api_key:
+            return f"{name}: keyless free tier · up to 1,000 lookups/day"
+        if self.provider == "ip2location":
+            return f"{name}: free key configured · 50,000 lookups/month; SwarmAtlas caps at 47,500/month"
         if self.provider == "2ip" and not self.api_key:
             return "2ip.io: API token required; free tokens allow up to 3 requests/second"
         if self.provider == "ip-api":
@@ -246,11 +263,17 @@ class RemoteGeoLocator:
             return 950
         if self.provider == "ipapi-is":
             return 950 if self.api_key else 25
+        if self.provider == "ip2location" and not self.api_key:
+            return 950
         return None
 
     def _monthly_limit(self) -> int | None:
-        # Leave headroom below the published 10,000 monthly free 2ip requests.
-        return 9500 if self.provider == "2ip" else None
+        # Leave headroom below each provider's documented free-tier quota.
+        if self.provider == "2ip":
+            return 9500
+        if self.provider == "ip2location" and self.api_key:
+            return 47500
+        return None
 
     def _minimum_interval(self) -> float:
         return {
@@ -258,6 +281,7 @@ class RemoteGeoLocator:
             "ipdata": 0.15,
             "ipapi-is": 0.15,
             "ipinfo-lite": 0.25,
+            "ip2location": 0.5, # conservative pacing for either free plan
             "2ip": 0.4,          # below 3 requests/second
         }[self.provider]
 
@@ -314,6 +338,8 @@ class RemoteGeoLocator:
             return "https://api.ipapi.is/"
         if self.provider == "ipinfo-lite":
             return f"https://api.ipinfo.io/lite/{encoded_ip}?" + urlencode({"token": self.api_key})
+        if self.provider == "ip2location":
+            return "https://api.ip2location.io/?" + urlencode({"ip": encoded_ip})
         if self.provider == "2ip":
             return f"https://api.2ip.io/{encoded_ip}?" + urlencode({"token": self.api_key})
         raise ValueError("Unsupported GeoIP provider")
@@ -323,6 +349,9 @@ class RemoteGeoLocator:
             "User-Agent": "SwarmAtlas/0.2 (user-selected GeoIP provider)",
             "Accept": "application/json",
         }
+        if self.provider == "ip2location" and self.api_key:
+            # Bearer authentication avoids putting the API key into the URL.
+            headers["Authorization"] = f"Bearer {self.api_key}"
         if self.provider == "ipapi-is":
             body: dict[str, str] = {"q": ip}
             if self.api_key:
