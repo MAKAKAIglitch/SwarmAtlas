@@ -248,7 +248,6 @@ class GeoIPProviderDialog(QDialog):
 
     def _sync_provider(self, *_args: Any) -> None:
         provider = str(self.provider_combo.currentData() or "dbip")
-        key_required = provider in {"ipinfo-lite", "2ip"}
         self.key_label.setVisible(provider != "dbip")
         self.api_key_input.setVisible(provider != "dbip")
         self.api_key_input.setEnabled(provider != "dbip")
@@ -896,9 +895,12 @@ class MainWindow(QMainWindow):
         header.addWidget(make_label(self.t("read_only"), 9, self.palette["accent"], 650))
         self.live_status = make_label(self.t("starting"), 10, self.palette["accent"], 600)
         header.addWidget(self.live_status)
-        self.transfer_status = make_label(self.t("transfer_waiting"), 9, self.palette["muted"], 600)
-        header.addWidget(self.transfer_status)
         content_layout.addLayout(header)
+
+        self.transfer_status = make_label(self.t("transfer_waiting"), 10, self.palette["text"], 600)
+        self.transfer_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.transfer_status.setMinimumHeight(26)
+        content_layout.addWidget(self.transfer_status)
 
         metrics = QHBoxLayout()
         metrics.setSpacing(12)
@@ -984,10 +986,8 @@ class MainWindow(QMainWindow):
         chart_layout.setContentsMargins(18, 16, 18, 12)
         chart_title = QHBoxLayout()
         self.chart_title = make_label(self.t("traffic_history"), 13, self.palette["text"], 600)
-        self.chart_period = make_label(self.t("last_hour"), 9, self.palette["muted"])
         chart_title.addWidget(self.chart_title)
         chart_title.addStretch(1)
-        chart_title.addWidget(self.chart_period)
         self.history_combo = QComboBox()
         for label_key, seconds in (
             ("last_hour", 3600),
@@ -1004,6 +1004,7 @@ class MainWindow(QMainWindow):
         self.chart = TrafficChart(self.palette, self.t("history_empty"))
         chart_layout.addWidget(self.chart)
         bottom.addWidget(chart_card, 6)
+        self.chart_card = chart_card
 
         peers_card = card()
         peers_layout = QVBoxLayout(peers_card)
@@ -1026,6 +1027,7 @@ class MainWindow(QMainWindow):
         self.endpoint_table.setShowGrid(False)
         peers_layout.addWidget(self.endpoint_table)
         bottom.addWidget(peers_card, 5)
+        self.peers_card = peers_card
         content_layout.addLayout(bottom)
 
         self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
@@ -1034,6 +1036,7 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
+        self.scroll_area = scroll
         outer.addWidget(sidebar)
         outer.addWidget(scroll, 1)
         self.setCentralWidget(root)
@@ -1076,8 +1079,13 @@ class MainWindow(QMainWindow):
             button.setProperty("active", active)
             button.style().unpolish(button)
             button.style().polish(button)
-        if key != "overview":
-            QMessageBox.information(self, self.t(key), self.t("page_coming", page=self.t(key)))
+        self.page_title.setText(self.t("overview_title") if key == "overview" else self.t(key))
+        if key == "history":
+            self.scroll_area.ensureWidgetVisible(self.chart_card, 20, 20)
+        elif key == "destinations":
+            self.scroll_area.ensureWidgetVisible(self.peers_card, 20, 20)
+        else:
+            self.scroll_area.verticalScrollBar().setValue(0)
 
     def change_interface(self) -> None:
         interface = str(self.interface_combo.currentData() or "auto")
@@ -1147,7 +1155,6 @@ class MainWindow(QMainWindow):
     def change_history_range(self) -> None:
         seconds = int(self.history_combo.currentData() or 3600)
         self.worker.set_history_range(seconds)
-        self.chart_period.setText(self.history_combo.currentText())
 
     def choose_geoip_databases(self) -> None:
         dialog = GeoIPDatabaseDialog(
@@ -1161,8 +1168,11 @@ class MainWindow(QMainWindow):
         paths = dialog.selected_paths()
         self.config.geoip_databases = paths
         self.config.geoip_database = paths[0] if paths else ""
+        self.config.geoip_provider = "dbip"
         self.config.save()
         self.worker.set_geoip_databases(paths)
+        self.worker.set_geoip_provider("dbip", self.config.geoip_api_key)
+        self.map_attribution_label.setText(self._map_attribution_html())
         self.statusBar().showMessage(self.t("preparing") if paths else self.t("geoip_missing"))
 
     def update_geo_status(self, status: str) -> None:
