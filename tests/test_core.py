@@ -270,3 +270,28 @@ def test_destination_scan_does_not_rewrite_every_historical_active_flag(tmp_path
     )
     assert store._db.execute("SELECT COUNT(*) FROM destinations").fetchone()[0] == 1
     store.close()
+
+
+
+def test_destination_cap_count_is_not_repeated_on_every_scan(tmp_path: Path) -> None:
+    store = Store(tmp_path / "throttled-destination-prune.sqlite3")
+    store.update_destinations(
+        [{"ip": "8.8.8.8", "port": 443, "protocol": "TCP"}],
+        timestamp=100.0,
+    )
+    statements: list[str] = []
+    store._db.set_trace_callback(statements.append)
+
+    store.update_destinations([], timestamp=105.0)
+    assert not any(
+        statement.strip().upper().startswith("SELECT COUNT(*) FROM DESTINATIONS")
+        for statement in statements
+    )
+
+    statements.clear()
+    store.update_destinations([], timestamp=161.0)
+    assert any(
+        statement.strip().upper().startswith("SELECT COUNT(*) FROM DESTINATIONS")
+        for statement in statements
+    )
+    store.close()
