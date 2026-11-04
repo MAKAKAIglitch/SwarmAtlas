@@ -88,6 +88,58 @@ Windows default application data: %APPDATA%\SwarmAtlas\. The launcher logs are i
 
 SQLite history, peer IPs, process names and diagnostic logs are not encrypted at rest by SwarmAtlas. They rely on the file permissions of the Windows user account. API tokens for online GeoIP services are also stored in the local settings file.
 
+## Language and module architecture
+
+SwarmAtlas deliberately uses more than one language, but each language has a defined responsibility. The goal is not to rewrite every file in Rust or to add languages for their own sake. A module should move only when profiling, platform integration or maintainability demonstrates a real benefit.
+
+### Current architecture
+
+```text
+Python application (PySide6 UI, settings, orchestration, provider logic)
+                    |
+             batched PyO3 calls
+                    |
+             Rust native core
+       Windows APIs + map geometry
+                    |
+          Python data/application layer
+                    |
+               SQLite / SQL
+```
+
+| Area | Current implementation | Language decision |
+|---|---|---|
+| Desktop UI and Qt widgets | `app.py`, `ui.py`, PySide6 | **Keep Python + PySide6.** Qt already performs painting and widget work in its native implementation; rewriting UI code in Rust or C++ would add complexity without proving a gain. |
+| Application flow, settings, themes and localization | `app.py`, `config.py`, `theme.py`, `i18n.py` | **Keep Python.** These are application logic and user-facing configuration, not CPU-heavy loops. |
+| Collector scheduling and presentation snapshots | `collector.py` | **Keep orchestration in Python.** It coordinates Qt signals, the active/background sampling profile, GeoIP and storage. Move only measured expensive OS queries or data-processing loops to Rust. |
+| Windows network tables and IP classification | `native/src/platform/windows/`, `native/src/network/` | **Rust — already implemented.** This is the right boundary for low-level Windows APIs, address normalization and bounded native table processing. |
+| Map projection and polygon simplification | `native/src/geo/geometry.rs` | **Rust — already implemented.** Numeric work is batched through PyO3 and runs without holding the Python GIL. Qt path objects remain on the Python/Qt side. |
+| Map downloads, archive validation and cached files | `map_data.py` | **Keep Python.** This is mostly file/network I/O and validation. Consider moving shapefile decoding only if profiling shows that parsing, rather than download or Qt path construction, dominates startup time. |
+| Offline GeoIP and MMDB cache | `geoip.py` | **Keep Python for now.** A Rust MMDB reader is a possible later optimization only if real lookup benchmarks show it is a bottleneck. The Rust `maxminddb` reader supports GeoIP2/GeoLite2 data and optional memory-mapped access; it is a candidate, not a dependency selected for the current build. |
+| Online GeoIP providers | `geoip_remote.py` | **Keep Python.** Request latency, provider quotas, retries and response normalization dominate; Rust would not make remote servers answer faster. |
+| History and endpoint database | `storage.py`, Python `sqlite3` and SQL | **Keep Python + SQL.** SQLite executes database operations in its native engine. Rewriting the wrapper in Rust is unlikely to improve query speed by itself. |
+| Qt rendering and interaction | `WorldMap`, `TrafficChart` in `ui.py` | **Keep Qt/PySide6.** Profile paint time and Python-to-Qt call counts first. If building `QPainterPath` objects becomes a proven bottleneck, try batched Qt operations before considering a small C++/Qt helper. Do not rewrite the full UI. |
+
+### What should move to Rust next
+
+These are candidates, not claims that the work is already implemented:
+
+1. **Network adapter counters and interface enumeration.** Evaluate a Rust implementation using Windows IP Helper APIs such as `GetIfTable2`, with a mapping to the selected adapter. Compare it against the current psutil path at the normal one-second sampling interval. Keep the current implementation as a fallback until the native path is validated on different adapters and VPN/virtual interfaces.
+2. **Process-name resolution.** The current collector caches process names and refreshes them periodically. Benchmark the cache-miss path first; if it is material, add a bounded Rust resolver that accepts only the PIDs found in the socket snapshot and returns only the requested names. Do not enumerate or query every process on every network tick.
+3. **Offline MMDB lookup.** Benchmark cold and warm lookups over realistic endpoint batches. Only if Python lookup time is significant, evaluate the Rust `maxminddb` reader, including mmap, locale handling and compatibility with the user's City/Country/ASN/ISP files.
+4. **Shapefile parsing.** Measure Natural Earth file parsing separately from archive download, antimeridian splitting, projection, simplification and Qt path construction. Move only the expensive parsing stage if it is a demonstrated startup bottleneck.
+5. **Optional ETW network-event collector.** If reliable UDP destination visibility is added, implement the Windows event consumer as a separate Rust subsystem. Keep it read-only, cancellable and opt-in; expose its CPU cost and sampling state, and do not capture or store packet payloads.
+
+### Languages reserved for future product changes
+
+- **C++** is reserved for a small Qt-native helper only if profiling proves the Python/Qt object boundary is the bottleneck. It is not a planned replacement for the current UI.
+- **TypeScript** makes sense only if SwarmAtlas gains a separate browser-based dashboard or web companion. It is not needed inside the current Windows desktop application.
+- **Go** may be considered for a separate headless server, multi-host collector coordinator or network service if that becomes a real product requirement. It does not belong in the current local-first desktop client while Rust already handles native Windows work.
+
+For the current product, the intended core is therefore **Python + Rust + SQL**. Batch calls across the Python/Rust boundary; never call Rust once per coordinate, table row or UI item. Keep one source of truth for each behavior, retain a Python fallback for optional native features, and require correctness tests plus before/after benchmarks for every port. A language change is accepted only when it improves measured performance, power use, OS integration or long-term maintainability.
+
+Useful project references: [PyO3](https://github.com/PyO3/pyo3) and [Maturin](https://github.com/PyO3/maturin) for Rust/Python integration, [Microsoft windows-rs](https://github.com/microsoft/windows-rs) for Windows API bindings, [Qt for Python](https://doc.qt.io/qtforpython-6/) for the desktop UI, and the [Rust MaxMind DB reader](https://github.com/oschwald/maxminddb-rust) as a possible MMDB benchmark candidate.
+
 ## Install and run on Windows
 
 Requirements: Windows 10/11, Python 3.11 or newer, and the Python Launcher (py). Double-click run_windows.bat.
@@ -141,7 +193,7 @@ The prebuilt Rust extension is installed automatically by run_windows.bat when a
 - Theme: System, Dark or Light.
 - Language: System, Русский or English.
 - Network adapter: automatic selection or a specific active interface.
-- When the main window is minimized, the collector automatically switches to a lower-power background cadence: interface counters every 5 seconds, interface checks every 20 seconds and endpoint scans every 15 seconds. Restoring the window immediately returns to the normal 1-second / 5-second cadence. Ten-second history sampling remains enabled.
+- When SwarmAtlas is not the active foreground application, or its window is minimized, the collector automatically switches to a lower-power background cadence: interface counters every 5 seconds, interface checks every 20 seconds and endpoint scans every 15 seconds. As soon as SwarmAtlas becomes the active application again, it immediately returns to the responsive foreground cadence (1-second counters and 5-second endpoint scans). Ten-second history sampling remains enabled.
 - The live header shows upload and download rates separately.
 - Native Windows 11 Mica backdrop is supported on Windows 11 22H2+.
 
