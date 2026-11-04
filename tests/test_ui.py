@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QPointF
 from PySide6.QtGui import QPainterPath, QPixmap
 from PySide6.QtWidgets import QApplication
 
@@ -333,4 +335,64 @@ def test_traffic_chart_skips_copying_the_same_history_snapshot(
     assert chart.upload is previous_upload
     assert chart.download is previous_download
     chart.deleteLater()
+    app.processEvents()
+
+
+
+def test_world_map_uses_spatial_hash_for_marker_hover(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    widget = WorldMap(get_palette("dark"), "No map data")
+    widget.resize(640, 320)
+
+    endpoints = []
+    for row in range(20):
+        normalized_y = row / 19
+        latitude = math.degrees(
+            math.atan(math.sinh(math.pi * (1.0 - 2.0 * normalized_y)))
+        )
+        for column in range(50):
+            normalized_x = column / 49
+            endpoints.append({
+                "ip": f"198.51.100.{(row * 50 + column) % 250 + 1}",
+                "longitude": normalized_x * 360.0 - 180.0,
+                "latitude": latitude,
+            })
+    widget.set_locations(endpoints)
+
+    target_index = 10 * 50 + 25
+    normalized = widget._location_world_points[target_index]
+    rect = widget._map_rect()
+    world_size = rect.width() * widget._zoom
+    target = QPointF(
+        rect.center().x() + widget._pan.x() + (normalized.x() - 0.5) * world_size,
+        rect.center().y() + widget._pan.y() + (normalized.y() - 0.5) * world_size,
+    )
+    assert widget._nearest_location(target) == target_index
+
+    assert widget._location_grid
+    cell_size = widget._location_grid_cell_size
+    cell_x = math.floor(normalized.x() / cell_size)
+    cell_y = math.floor(normalized.y() / cell_size)
+    candidates = sum(
+        len(widget._location_grid.get((x, y), ()))
+        for y in range(cell_y - 1, cell_y + 2)
+        for x in range(cell_x - 1, cell_x + 2)
+    )
+    assert candidates < 100
+    old_grid_key = widget._location_grid_key
+
+    widget.zoom_in()
+    rect = widget._map_rect()
+    world_size = rect.width() * widget._zoom
+    target = QPointF(
+        rect.center().x() + widget._pan.x() + (normalized.x() - 0.5) * world_size,
+        rect.center().y() + widget._pan.y() + (normalized.y() - 0.5) * world_size,
+    )
+    assert widget._nearest_location(target) == target_index
+    assert widget._location_grid_key != old_grid_key
+
+    widget.deleteLater()
     app.processEvents()
