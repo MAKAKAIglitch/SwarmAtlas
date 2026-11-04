@@ -112,11 +112,16 @@ def _process_name(process_id: int | None) -> str | None:
 def _warm_process_name_cache(process_ids: Any) -> None:
     """Resolve uncached PIDs in one process-table pass instead of opening each PID separately."""
     now = time.monotonic()
-    requested = {
-        int(process_id)
-        for process_id in process_ids
-        if process_id is not None and int(process_id) > 0
-    }
+    requested: set[int] = set()
+    for process_id in process_ids:
+        if process_id is None:
+            continue
+        try:
+            pid = int(process_id)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if pid > 0:
+            requested.add(pid)
     if not requested:
         return
 
