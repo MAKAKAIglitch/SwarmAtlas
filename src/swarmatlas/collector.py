@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
 import threading
 import time
@@ -17,6 +18,9 @@ from .map_data import load_world_boundaries
 from .native import NATIVE_AVAILABLE, backend_status, list_tcp_connections, list_udp_bindings
 from .storage import Store
 from .theme import resolve_language
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 # Conservative polling: the socket/owner tables are scanned less often than byte counters.
@@ -364,6 +368,7 @@ class NetworkWorker(QThread):
                     )
                     effective_geoip = (str(database),)
                 except Exception as exc:
+                    _LOGGER.exception("Could not prepare the default DB-IP City Lite database")
                     effective_geoip = ()
                     self.status_changed.emit(
                         f"Could not prepare the default DB-IP database: {type(exc).__name__}: {exc}"
@@ -387,6 +392,7 @@ class NetworkWorker(QThread):
                 self.map_data_ready.emit(countries, regions)
                 self.status_changed.emit("Country and region map ready")
             except Exception as exc:
+                _LOGGER.exception("Could not load offline Natural Earth country/region boundaries")
                 self.status_changed.emit(
                     f"Offline country/region map unavailable: {type(exc).__name__}: {exc}"
                 )
@@ -495,6 +501,7 @@ class NetworkWorker(QThread):
                 self._stop_event.wait(COUNTER_SAMPLE_INTERVAL_SEC)
 
         except Exception as exc:
+            _LOGGER.exception("SwarmAtlas network worker stopped after an unexpected error")
             message = f"Monitor stopped safely: {type(exc).__name__}: {exc}"
             self.status_changed.emit(message)
             if not startup_notified:
