@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication
 
 from swarmatlas import config
 from swarmatlas.theme import get_palette
-from swarmatlas.ui import MainWindow, WorldMap
+from swarmatlas.ui import GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, WorldMap
 
 
 def test_main_window_exposes_system_theme_language_and_region_views(
@@ -133,4 +133,40 @@ def test_endpoint_table_shows_ip_without_geoip_coordinates(tmp_path: Path, monke
 
     window.close()
     window.deleteLater()
+    app.processEvents()
+
+
+
+def test_local_geoip_dialog_links_to_compatible_official_mmdb_downloads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    dialog = GeoIPDatabaseDialog([], "ru", get_palette("dark"))
+
+    links = dialog.download_label.text()
+    assert "db-ip.com/db/lite.php" in links
+    assert "maxmind.com/en/geolite2/signup" in links
+    assert "support.maxmind.com" in links
+    assert dialog.download_label.openExternalLinks()
+    assert ".mmdb" in dialog.download_instructions.text().lower()
+
+    dialog.close()
+    dialog.deleteLater()
+    app.processEvents()
+
+
+def test_local_provider_note_has_download_links(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    dialog = GeoIPProviderDialog("dbip", {}, "ru", get_palette("dark"))
+
+    assert "db-ip.com/db/lite.php" in dialog.info_label.text()
+    assert "maxmind.com/en/geolite2/signup" in dialog.info_label.text()
+    assert dialog.info_label.openExternalLinks()
+
+    dialog.close()
+    dialog.deleteLater()
     app.processEvents()
