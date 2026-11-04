@@ -26,6 +26,8 @@ SKIP_PARTS = {
     ".mypy_cache",
     ".ruff_cache",
     ".tox",
+    "target",
+    "dist",
     ".swarmatlas-update-backup",
 }
 SKIP_SUFFIXES = {".mmdb", ".sqlite", ".sqlite3", ".db", ".log", ".pyc"}
