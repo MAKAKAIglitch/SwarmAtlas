@@ -25,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Conservative polling: the socket/owner tables are scanned less often than byte counters.
 COUNTER_SAMPLE_INTERVAL_SEC = 1.0
-ENDPOINT_SCAN_INTERVAL_SEC = 15.0
+ENDPOINT_SCAN_INTERVAL_SEC = 3.0
 HISTORY_SAMPLE_INTERVAL_SEC = 10.0
 MAX_TRACKED_ENDPOINTS = 2000
 PROCESS_NAME_CACHE_LIMIT = 512
@@ -248,6 +248,41 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
             tcp_found.clear()
 
         if native_ok:
+            # A successful Windows API call may still produce no usable public
+            # rows (for example, due to an OS/build-specific table response).
+            # Cross-check an empty native result with psutil before declaring
+            # that there are no active TCP destinations.
+            if not tcp_found:
+                try:
+                    fallback_tcp = psutil.net_connections(kind="tcp")
+                except psutil.Error:
+                    fallback_tcp = []
+
+                for connection in fallback_tcp:
+                    parsed = _parse_remote(connection.raddr)
+                    if parsed is None:
+                        continue
+                    ip, port = parsed
+                    local = _address_parts(connection.laddr)
+                    local_port = local[1] if local is not None else 0
+                    process_id = getattr(connection, "pid", None)
+                    endpoint = _make_endpoint(
+                        ip,
+                        port,
+                        "TCP",
+                        process_id,
+                        local_port,
+                        str(getattr(connection, "status", "") or ""),
+                    )
+                    key = (
+                        ip, port, "TCP",
+                        int(endpoint.get("process_id") or 0),
+                        int(endpoint.get("local_port") or 0),
+                    )
+                    tcp_found[key] = endpoint
+                    if len(tcp_found) >= max_items:
+                        break
+
             udp_exact, udp_by_port = _udp_owner_index()
             try:
                 udp_connections = psutil.net_connections(kind="udp")
@@ -512,9 +547,17 @@ class NetworkWorker(QThread):
                         owner_count = sum(
                             1 for endpoint in endpoints if endpoint.get("process_id")
                         )
+                        tcp_count = sum(
+                            1 for endpoint in endpoints if endpoint.get("protocol") == "TCP"
+                        )
+                        udp_count = sum(
+                            1 for endpoint in endpoints if endpoint.get("protocol") == "UDP"
+                        )
                         connection_status = (
-                            f"{len(endpoints)} public endpoints observed; "
-                            f"{owner_count} with process owner (scan every 15 s)"
+                            f"{len(endpoints)} public endpoints observed "
+                            f"(TCP: {tcp_count}, UDP: {udp_count}); "
+                            f"{owner_count} with process owner "
+                            f"(scan every {ENDPOINT_SCAN_INTERVAL_SEC:g} s)"
                         )
                     except psutil.AccessDenied:
                         connection_status = "Socket table access restricted; interface totals still work"
