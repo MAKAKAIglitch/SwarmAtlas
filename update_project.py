@@ -35,9 +35,10 @@ NATIVE_REQUIRED_CAPABILITIES = frozenset({
     "tcp-owner-pid",
     "tcp-public-endpoints",
     "udp-owner-pid",
+    "udp-socket-count",
 })
 NATIVE_CAPABILITY_ASSERTION = (
-    "assert {'read-only', 'tcp-owner-pid', 'tcp-public-endpoints', 'udp-owner-pid'} <= caps"
+    "assert {'read-only', 'tcp-owner-pid', 'tcp-public-endpoints', 'udp-owner-pid', 'udp-socket-count'} <= caps"
 )
 
 SKIP_PARTS = {
