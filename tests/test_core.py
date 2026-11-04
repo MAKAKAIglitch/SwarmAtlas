@@ -38,3 +38,24 @@ def test_destination_history_is_pruned_after_30_days(tmp_path: Path) -> None:
     count = store._db.execute("SELECT COUNT(*) FROM destinations").fetchone()[0]
     assert count == 0
     store.close()
+
+
+
+def test_store_persists_asn_and_organization_details(tmp_path: Path) -> None:
+    store = Store(tmp_path / "asn.sqlite3")
+    store.update_destinations(
+        [{
+            "ip": "8.8.8.8",
+            "port": 443,
+            "protocol": "TCP",
+            "asn": 15169,
+            "organization": "Google LLC",
+        }],
+        timestamp=100.0,
+    )
+
+    summary = store.summary("Ethernet", now=100.0)
+    endpoint = summary["active_endpoints"][0]
+    assert endpoint["asn"] == 15169
+    assert endpoint["organization"] == "Google LLC"
+    store.close()
