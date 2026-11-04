@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 from collections import namedtuple
+from types import SimpleNamespace
 
 from swarmatlas import collector
 
@@ -50,7 +51,7 @@ def test_native_path_keeps_multiple_processes_connected_to_same_ip(monkeypatch) 
     monkeypatch.setattr(
         collector,
         "list_tcp_connections",
-        lambda: [
+        lambda limit=2000: [
             {
                 "ip": "8.8.8.8", "port": 443, "protocol": "TCP",
                 "process_id": 101, "local_port": 51001, "connection_state": "ESTABLISHED",
@@ -61,18 +62,70 @@ def test_native_path_keeps_multiple_processes_connected_to_same_ip(monkeypatch) 
             },
         ],
     )
-    monkeypatch.setattr(
-        collector,
-        "list_udp_bindings",
-        lambda: [],
-    )
-    monkeypatch.setattr(
-        collector.psutil,
-        "net_connections",
-        lambda kind="udp": [],
-    )
+    monkeypatch.setattr(collector, "list_udp_bindings", lambda: [])
+    monkeypatch.setattr(collector.psutil, "net_connections", lambda kind="udp": [])
     collector._PROCESS_NAME_CACHE.clear()
 
     endpoints = collector.collect_public_endpoints()
     assert len(endpoints) == 2
     assert {item["process_id"] for item in endpoints} == {101, 202}
+
+
+def test_native_scan_preserves_udp_visibility_when_tcp_is_busy(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
+    requested_limits: list[int] = []
+    monkeypatch.setattr(
+        collector,
+        "list_tcp_connections",
+        lambda limit=2000: (
+            requested_limits.append(limit)
+            or [
+                {
+                    "ip": f"8.8.8.{index}", "port": 443, "protocol": "TCP",
+                    "process_id": 100 + index, "local_port": 51000 + index,
+                    "connection_state": "ESTABLISHED",
+                }
+                for index in range(1, 4)
+            ]
+        ),
+    )
+    monkeypatch.setattr(collector, "list_udp_bindings", lambda: [])
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_connections",
+        lambda kind="udp": [
+            FakeConnection("1.1.1.1", 443, "192.0.2.10", 53000, socket.SOCK_DGRAM, 77)
+        ] if kind == "udp" else [],
+    )
+
+    endpoints = collector.collect_public_endpoints(limit=2)
+    assert requested_limits == [2]
+    assert len(endpoints) == 2
+    assert {item["protocol"] for item in endpoints} == {"TCP", "UDP"}
+
+
+def test_python_fallback_interleaves_tcp_and_udp_when_limit_is_reached(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", False)
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_connections",
+        lambda kind="inet": [
+            FakeConnection("8.8.8.8", 443, "192.0.2.10", 51001, socket.SOCK_STREAM, 1),
+            FakeConnection("8.8.4.4", 443, "192.0.2.10", 51002, socket.SOCK_STREAM, 2),
+            FakeConnection("1.1.1.1", 443, "192.0.2.10", 53000, socket.SOCK_DGRAM, 3),
+        ],
+    )
+
+    endpoints = collector.collect_public_endpoints(limit=2)
+    assert len(endpoints) == 2
+    assert {item["protocol"] for item in endpoints} == {"TCP", "UDP"}
+
+
+def test_remote_parser_accepts_attribute_addresses_without_tuple_indexing() -> None:
+    address = SimpleNamespace(ip="8.8.8.8", port=443)
+    assert collector._parse_remote(address) == ("8.8.8.8", 443)
+
+
+def test_remote_parser_rejects_invalid_ports() -> None:
+    assert collector._parse_remote(("8.8.8.8", -1)) is None
+    assert collector._parse_remote(("8.8.8.8", 65536)) is None

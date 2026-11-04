@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,28 +43,43 @@ jobs:
           path: native/dist/*.whl
           if-no-files-found: error
           retention-days: 14
-      
-      - name: Publish the latest optional Rust wheel
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: pwsh
+
+  publish-native:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: swarmatlas-native-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Download the wheel produced by the successful test job
+        uses: actions/download-artifact@v4
+        with:
+          name: swarmatlas-native-win-x64
+          path: dist
+      - name: Publish the tested native wheel
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        shell: bash
         run: |
-          $wheel = Get-ChildItem native/dist/swarmatlas_native-*-cp311-abi3-win_amd64.whl | Select-Object -First 1
-          if ($null -eq $wheel) { throw "Stable-ABI Windows wheel was not created." }
-          gh --version
-          if ($LASTEXITCODE -ne 0) { throw "GitHub CLI is not available on this runner." }
+          set -euo pipefail
+          mapfile -t wheels < <(find dist -maxdepth 1 -type f -name '*-cp311-abi3-win_amd64.whl' -print)
+          if [[ "${#wheels[@]}" -ne 1 ]]; then
+            echo "Expected exactly one stable-ABI Windows wheel; found ${#wheels[@]}."
+            exit 1
+          fi
 
-          $checksum = Join-Path $env:RUNNER_TEMP "wheel.sha256"
-          $hash = (Get-FileHash $wheel.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $($wheel.Name)" | Set-Content -Encoding ascii $checksum
+          wheel="${wheels[0]}"
+          wheel_name="$(basename "$wheel")"
+          sha256sum "$wheel" > dist/wheel.sha256
 
-          $tag = "native-latest"
-          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "SwarmAtlas native core (latest)" --notes "Latest stable-ABI Windows x64 optional Rust monitoring core. Built and tested by GitHub Actions."
-            if ($LASTEXITCODE -ne 0) { throw "Could not create the native-latest release." }
-          }
+          tag="native-latest"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "SwarmAtlas native core (latest)"               --notes "Latest stable-ABI Windows x64 optional Rust monitoring core. Built and tested by GitHub Actions."
+          fi
 
-          gh release upload $tag $wheel.FullName $checksum --repo $env:GITHUB_REPOSITORY --clobber
-          if ($LASTEXITCODE -ne 0) { throw "Could not publish the native wheel and SHA-256 file." }
+          gh release upload "$tag" "$wheel" dist/wheel.sha256             --repo "$GITHUB_REPOSITORY" --clobber

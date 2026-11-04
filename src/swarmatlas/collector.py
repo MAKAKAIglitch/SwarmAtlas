@@ -22,12 +22,13 @@ ENDPOINT_SCAN_INTERVAL_SEC = 15.0
 HISTORY_SAMPLE_INTERVAL_SEC = 10.0
 MAX_TRACKED_ENDPOINTS = 2000
 PROCESS_NAME_CACHE_LIMIT = 512
+PROCESS_NAME_CACHE_TTL_SEC = 30.0
 
 VIRTUAL_MARKERS = (
     "loopback", "virtual", "vmware", "virtualbox", "hyper-v", "vethernet",
     "wintun", "wireguard", "zerotier", "tailscale", "tap-", "docker", "wsl",
 )
-_PROCESS_NAME_CACHE: dict[int, str | None] = {}
+_PROCESS_NAME_CACHE: dict[int, tuple[float, str | None]] = {}
 
 
 def available_interfaces() -> list[str]:
@@ -66,10 +67,14 @@ def choose_default_interface() -> str:
 
 
 def _process_name(process_id: int | None) -> str | None:
+    """Resolve a PID name with a short cache lifetime to limit stale PID reuse."""
     if not process_id or process_id <= 0:
         return None
-    if process_id in _PROCESS_NAME_CACHE:
-        return _PROCESS_NAME_CACHE[process_id]
+
+    now = time.monotonic()
+    cached = _PROCESS_NAME_CACHE.get(process_id)
+    if cached is not None and now - cached[0] < PROCESS_NAME_CACHE_TTL_SEC:
+        return cached[1]
 
     try:
         name = psutil.Process(process_id).name()
@@ -77,15 +82,47 @@ def _process_name(process_id: int | None) -> str | None:
         name = None
 
     if len(_PROCESS_NAME_CACHE) >= PROCESS_NAME_CACHE_LIMIT:
-        _PROCESS_NAME_CACHE.clear()
-    _PROCESS_NAME_CACHE[process_id] = name
+        expired = [
+            pid for pid, (checked_at, _) in _PROCESS_NAME_CACHE.items()
+            if now - checked_at >= PROCESS_NAME_CACHE_TTL_SEC
+        ]
+        for pid in expired:
+            _PROCESS_NAME_CACHE.pop(pid, None)
+        if len(_PROCESS_NAME_CACHE) >= PROCESS_NAME_CACHE_LIMIT:
+            _PROCESS_NAME_CACHE.pop(next(iter(_PROCESS_NAME_CACHE)))
+
+    _PROCESS_NAME_CACHE[process_id] = (now, name)
     return name
 
 
-def _parse_remote(remote: Any) -> tuple[str, int] | None:
-    if not remote:
+def _address_parts(value: Any) -> tuple[str, int] | None:
+    """Accept psutil named tuples and ordinary two-item socket address tuples."""
+    if value is None:
         return None
-    ip = str(getattr(remote, "ip", remote[0]))
+
+    try:
+        ip_value = value.ip
+        port_value = value.port
+    except (AttributeError, TypeError):
+        try:
+            ip_value, port_value = value[0], value[1]
+        except (IndexError, KeyError, TypeError):
+            return None
+
+    try:
+        port = int(port_value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not 0 <= port <= 65535:
+        return None
+    return str(ip_value), port
+
+
+def _parse_remote(remote: Any) -> tuple[str, int] | None:
+    parts = _address_parts(remote)
+    if parts is None:
+        return None
+    ip, port = parts
     try:
         address = ipaddress.ip_address(ip)
     except ValueError:
@@ -95,7 +132,6 @@ def _parse_remote(remote: Any) -> tuple[str, int] | None:
         ip = str(address)
     if not address.is_global:
         return None
-    port = int(getattr(remote, "port", remote[1]))
     return ip, port
 
 
@@ -138,15 +174,44 @@ def _udp_owner_index() -> tuple[dict[tuple[str, int], int], dict[int, set[int]]]
     return exact, by_port
 
 
+def _interleave_endpoints(
+    tcp: dict[tuple[str, int, str, int, int], dict[str, Any]],
+    udp: dict[tuple[str, int, str, int, int], dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Keep UDP visible when a busy TCP host reaches the endpoint display cap."""
+    tcp_items = iter(tcp.values())
+    udp_items = iter(udp.values())
+    result: list[dict[str, Any]] = []
+    while len(result) < limit:
+        progressed = False
+        try:
+            result.append(next(tcp_items))
+            progressed = True
+        except StopIteration:
+            pass
+        if len(result) >= limit:
+            break
+        try:
+            result.append(next(udp_items))
+            progressed = True
+        except StopIteration:
+            pass
+        if not progressed:
+            break
+    return result
+
+
 def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[str, Any]]:
     """Read public remote endpoints and their owning PIDs, without packet capture."""
-    found: dict[tuple[str, int, str, int, int], dict[str, Any]] = {}
     max_items = max(1, int(limit))
+    tcp_found: dict[tuple[str, int, str, int, int], dict[str, Any]] = {}
+    udp_found: dict[tuple[str, int, str, int, int], dict[str, Any]] = {}
 
     if NATIVE_AVAILABLE:
         native_ok = False
         try:
-            tcp_rows = list_tcp_connections()
+            tcp_rows = list_tcp_connections(limit=max_items)
             native_ok = True
             for item in tcp_rows:
                 parsed = _parse_remote((item["ip"], item["port"]))
@@ -166,14 +231,14 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
                     int(endpoint.get("process_id") or 0),
                     int(endpoint.get("local_port") or 0),
                 )
-                found[key] = endpoint
-                if len(found) >= max_items:
-                    return list(found.values())
+                tcp_found[key] = endpoint
+                if len(tcp_found) >= max_items:
+                    break
         except Exception:
             # A missing DLL, denied table, or incompatible extension falls back
             # to psutil. Nothing is elevated or changed in the Windows stack.
             native_ok = False
-            found.clear()
+            tcp_found.clear()
 
         if native_ok:
             udp_exact, udp_by_port = _udp_owner_index()
@@ -187,9 +252,8 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
                 if parsed is None:
                     continue
                 ip, port = parsed
-                local = connection.laddr
-                local_ip = str(getattr(local, "ip", local[0] if local else ""))
-                local_port = int(getattr(local, "port", local[1] if local else 0))
+                local = _address_parts(connection.laddr)
+                local_ip, local_port = local if local is not None else ("", 0)
                 process_id = getattr(connection, "pid", None)
                 if not process_id:
                     process_id = udp_exact.get((local_ip, local_port))
@@ -205,10 +269,10 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
                     int(endpoint.get("process_id") or 0),
                     int(endpoint.get("local_port") or 0),
                 )
-                found[key] = endpoint
-                if len(found) >= max_items:
+                udp_found[key] = endpoint
+                if len(udp_found) >= max_items:
                     break
-            return list(found.values())
+            return _interleave_endpoints(tcp_found, udp_found, max_items)
 
     # Compatibility backend. This is also used when the native extension is
     # not built, preserving the existing first-run experience.
@@ -218,8 +282,8 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
             continue
         ip, port = parsed
         protocol = "UDP" if connection.type == socket.SOCK_DGRAM else "TCP"
-        local = connection.laddr
-        local_port = int(getattr(local, "port", local[1] if local else 0))
+        local = _address_parts(connection.laddr)
+        local_port = local[1] if local is not None else 0
         process_id = getattr(connection, "pid", None)
         endpoint = _make_endpoint(
             ip,
@@ -234,10 +298,12 @@ def collect_public_endpoints(limit: int = MAX_TRACKED_ENDPOINTS) -> list[dict[st
             int(endpoint.get("process_id") or 0),
             int(endpoint.get("local_port") or 0),
         )
-        found[key] = endpoint
-        if len(found) >= max_items:
+        target = udp_found if protocol == "UDP" else tcp_found
+        if len(target) < max_items:
+            target[key] = endpoint
+        if len(tcp_found) >= max_items and len(udp_found) >= max_items:
             break
-    return list(found.values())
+    return _interleave_endpoints(tcp_found, udp_found, max_items)
 
 
 class NetworkWorker(QThread):
@@ -393,9 +459,3 @@ class NetworkWorker(QThread):
                     store.close()
                 except Exception:
                     pass
-
-    @staticmethod
-    def _resolve_interface(requested: str) -> str:
-        if requested == "auto" or not requested:
-            return choose_default_interface()
-        return requested if requested in psutil.net_if_stats() else choose_default_interface()
