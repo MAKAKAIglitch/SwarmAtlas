@@ -109,15 +109,28 @@ class GeoIPDatabaseDialog(QDialog):
         self.language = language
         self.palette = palette
         self.setWindowTitle(tr("geoip_settings", language))
-        self.setMinimumSize(540, 370)
+        self.setMinimumSize(560, 440)
 
         layout = QVBoxLayout(self)
         intro = make_label(tr("geoip_dialog_intro", language), 10, palette["text"])
         intro.setWordWrap(True)
         note = make_label(tr("geoip_privacy_note", language), 9, palette["muted"])
         note.setWordWrap(True)
+        self.download_label = QLabel(tr("geoip_download_sources", language))
+        self.download_label.setTextFormat(Qt.TextFormat.RichText)
+        self.download_label.setOpenExternalLinks(True)
+        self.download_label.setWordWrap(True)
+        self.download_label.setStyleSheet(
+            f"color: {palette['text']}; background: transparent;"
+        )
+        self.download_instructions = make_label(
+            tr("geoip_download_instructions", language), 9, palette["muted"]
+        )
+        self.download_instructions.setWordWrap(True)
         layout.addWidget(intro)
         layout.addWidget(note)
+        layout.addWidget(self.download_label)
+        layout.addWidget(self.download_instructions)
 
         self.empty_label = make_label(tr("geoip_empty", language), 9, palette["muted"])
         layout.addWidget(self.empty_label)
@@ -247,6 +260,8 @@ class GeoIPProviderDialog(QDialog):
 
         self.info_label = make_label("", 9, palette["muted"])
         self.info_label.setWordWrap(True)
+        self.info_label.setTextFormat(Qt.TextFormat.RichText)
+        self.info_label.setOpenExternalLinks(True)
         layout.addWidget(self.info_label)
 
         buttons = QDialogButtonBox(
