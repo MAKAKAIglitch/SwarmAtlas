@@ -387,6 +387,23 @@ class MainWindow(QMainWindow):
             )
         self._apply_theme()
         self._build_ui()
+        self._fade_in_rebuilt_ui()
+
+    def _fade_in_rebuilt_ui(self) -> None:
+        root = self.centralWidget()
+        if root is None:
+            return
+        effect = QGraphicsOpacityEffect(root)
+        effect.setOpacity(0.84)
+        root.setGraphicsEffect(effect)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(140)
+        animation.setStartValue(0.84)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._rebuild_fade = animation
+        animation.finished.connect(lambda: root.setGraphicsEffect(None))
+        animation.start()
 
     def _build_ui(self) -> None:
         root = QWidget()
