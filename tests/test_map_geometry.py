@@ -27,3 +27,26 @@ def test_map_path_builder_accepts_empty_datasets() -> None:
     country_path, region_path = build_boundary_paths([], [])
     assert country_path.isEmpty()
     assert region_path.isEmpty()
+
+
+
+def test_fused_projection_and_radial_filter_match_staged_simplification() -> None:
+    from swarmatlas.map_geometry import (
+        _project,
+        _project_and_simplify_ring,
+    )
+
+    geographic = [
+        (-120.0 + index * 0.001, 35.0 + (0.00001 if index % 2 else 0.0))
+        for index in range(500)
+    ]
+    tolerance = 0.00001
+    staged = simplify_projected_ring(
+        [_project(longitude, latitude) for longitude, latitude in geographic],
+        tolerance,
+    )
+
+    fused = _project_and_simplify_ring(geographic, tolerance)
+
+    assert fused == staged
+    assert len(fused) < len(geographic)
