@@ -13,6 +13,7 @@ from typing import Sequence, TextIO
 
 MIN_PYTHON = (3, 11)
 MAX_LOG_FILES = 10
+DEPENDENCY_PROBE = "import PySide6, psutil, geoip2, maxminddb, shapefile, swarmatlas"
 
 
 def _timestamp() -> str:
@@ -150,7 +151,7 @@ def _run(log: TextIO | None, root: Path) -> int:
         [
             str(venv_python),
             "-c",
-            "import PySide6, psutil, geoip2, swarmatlas",
+            DEPENDENCY_PROBE,
         ],
         log,
         root,

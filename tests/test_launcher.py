@@ -4,7 +4,7 @@ import io
 import sys
 from pathlib import Path
 
-from run_windows import stream_process
+from run_windows import DEPENDENCY_PROBE, stream_process
 
 
 def test_stream_process_duplicates_stdout_and_stderr_to_log(tmp_path: Path) -> None:
@@ -43,3 +43,13 @@ def test_stream_process_records_nonzero_exit_code(tmp_path: Path) -> None:
     assert result == 23
     assert "code 23" in output.getvalue()
     assert "code 23" in log_path.read_text(encoding="utf-8")
+
+
+
+def test_launcher_checks_all_runtime_map_and_geoip_dependencies() -> None:
+    assert "PySide6" in DEPENDENCY_PROBE
+    assert "psutil" in DEPENDENCY_PROBE
+    assert "geoip2" in DEPENDENCY_PROBE
+    assert "maxminddb" in DEPENDENCY_PROBE
+    assert "shapefile" in DEPENDENCY_PROBE
+    assert "swarmatlas" in DEPENDENCY_PROBE
