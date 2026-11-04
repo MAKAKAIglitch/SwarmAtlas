@@ -170,3 +170,27 @@ def test_network_worker_falls_back_when_saved_interface_is_unavailable(monkeypat
     worker = collector.NetworkWorker(AppConfig(interface="Ethernet"))
 
     assert worker._resolve_interface("Ethernet") == "Wi-Fi"
+
+
+
+def test_native_empty_result_falls_back_to_psutil_tcp_table(monkeypatch) -> None:
+    monkeypatch.setattr(collector, "NATIVE_AVAILABLE", True)
+    monkeypatch.setattr(collector, "list_tcp_connections", lambda limit=2000: [])
+    monkeypatch.setattr(collector, "list_udp_bindings", lambda: [])
+    monkeypatch.setattr(
+        collector.psutil,
+        "net_connections",
+        lambda kind="inet": [
+            FakeConnection(
+                "8.8.8.8", 443, "192.0.2.10", 51515, socket.SOCK_STREAM, 4567
+            )
+        ] if kind == "tcp" else [],
+    )
+    collector._PROCESS_NAME_CACHE.clear()
+
+    endpoints = collector.collect_public_endpoints()
+
+    assert len(endpoints) == 1
+    assert endpoints[0]["ip"] == "8.8.8.8"
+    assert endpoints[0]["protocol"] == "TCP"
+    assert endpoints[0]["process_id"] == 4567
