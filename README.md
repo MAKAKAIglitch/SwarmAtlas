@@ -40,7 +40,7 @@ Open **GeoIP provider** in the sidebar to choose one of the following. The defau
 | **IPinfo Lite** | Online country and ASN/AS name | Requires an IPinfo token. Lite is country/ASN-level data; it does not provide city coordinates. Public use requires attribution. |
 | **2ip.io** | Online country, city and network/ASN data | Requires an API token. The provider advertises 10,000 free requests/month after registration and a free-token rate limit of 3 requests/second. SwarmAtlas stops at 9,500 requests/month to leave a safety margin. |
 
-The online providers are intentionally not queried in parallel: select one source at a time. Lookups run in a background worker, public IPs are cached in memory, provider request rates are limited, and daily free-tier budgets are tracked locally. Private, loopback and link-local addresses are never sent to a remote GeoIP API. Switching back to DB-IP Lite returns to local lookups.
+The online providers are intentionally not queried in parallel: select one source at a time. Lookups run in a background worker, public IPs are cached in memory, provider request rates are limited, and daily and monthly free-tier budgets are tracked locally. Private, loopback and link-local addresses are never sent to a remote GeoIP API. Switching back to DB-IP Lite returns to local lookups.
 
 **Privacy note:** online GeoIP necessarily discloses the looked-up destination IP to the selected provider. IP-API's free endpoint is unencrypted HTTP, so it is not a privacy-equivalent alternative to the HTTPS providers. Do not select it unless its non-commercial terms and transport characteristics suit your use. DB-IP Lite is recommended for private/offline use.
 
