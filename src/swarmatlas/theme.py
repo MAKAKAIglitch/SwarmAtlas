@@ -134,5 +134,6 @@ def apply_windows_mica(window: Any, dark: bool) -> bool:
             hwnd, 38, ctypes.byref(backdrop_value), ctypes.sizeof(backdrop_value)
         )
         return result == 0
-    except (AttributeError, OSError, TypeError, ValueError):
+    except Exception:
+        # Native Mica is an optional decoration; failures fall back to Qt styling.
         return False
