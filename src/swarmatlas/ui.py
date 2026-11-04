@@ -108,11 +108,16 @@ class GeoIPDatabaseDialog(QDialog):
         layout.addWidget(intro)
         layout.addWidget(note)
 
+        self.empty_label = make_label(tr("geoip_empty", language), 9, palette["muted"])
+        layout.addWidget(self.empty_label)
         self.items = QListWidget()
         self.items.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         layout.addWidget(self.items, 1)
         for path in paths:
             self._add_path(path)
+        self._update_empty_state()
+        self.items.model().rowsInserted.connect(self._update_empty_state)
+        self.items.model().rowsRemoved.connect(self._update_empty_state)
 
         actions = QHBoxLayout()
         self.add_button = QPushButton(tr("geoip_add", language))
@@ -152,6 +157,10 @@ class GeoIPDatabaseDialog(QDialog):
         item.setData(Qt.ItemDataRole.UserRole, normalized)
         item.setToolTip(normalized)
         self.items.addItem(item)
+        self._update_empty_state()
+
+    def _update_empty_state(self, *_args: Any) -> None:
+        self.empty_label.setVisible(self.items.count() == 0)
 
     def add_databases(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -166,6 +175,7 @@ class GeoIPDatabaseDialog(QDialog):
     def remove_selected(self) -> None:
         for item in self.items.selectedItems():
             self.items.takeItem(self.items.row(item))
+        self._update_empty_state()
 
     def selected_paths(self) -> list[str]:
         return [
