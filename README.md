@@ -156,6 +156,10 @@ All application data stays on this PC:
 
 The SQLite database stores interface counters, traffic-rate samples, observed public endpoint metadata, and the process ID/name associated with observed connections. It never stores packet contents. No remote geolocation requests or runtime telemetry are sent. Old endpoint records are removed after 30 days; traffic-rate samples are retained for 90 days.
 
+The monitor does not send peer IP addresses, process names, PIDs, or traffic statistics to a SwarmAtlas server or to a GeoIP provider. The optional updater contacts GitHub only when you launch it, and package/build tools contact their configured package sources only when you explicitly install or build components.
+
+**Local storage note:** the SQLite history and diagnostic logs are stored as normal files and are not encrypted at rest by SwarmAtlas. They rely on the Windows user-profile file permissions. Anyone who can read your Windows account files may be able to inspect saved peer IPs, process names, and local paths.
+
 ## Current measurement model
 
 - **Upload / Download:** byte deltas from the selected network interface's OS counters.
