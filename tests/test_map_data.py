@@ -25,7 +25,7 @@ def test_region_shapefile_is_read_as_polygon_rings(tmp_path: Path) -> None:
 
 def test_map_ring_is_split_at_antimeridian() -> None:
     segments = _split_antimeridian([
-        (170, 10), (179, 12), (-179, 12), (-170, 10), (-170, -10)
+        (170, 10), (175, 12), (179, 15), (-179, 15), (-175, 12), (-170, 10), (-170, -10)
     ])
     assert len(segments) == 2
     assert all(len(segment) >= 3 for segment in segments)

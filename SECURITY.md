@@ -9,7 +9,8 @@ Allowed operations in the current prototype:
 - Read the operating system's TCP/UDP connection-owner tables through the optional Rust extension (Windows IP Helper APIs), or through the Python psutil fallback.
 - Read process IDs and, when permitted, process names for observed connections.
 - Read local UDP bind ownership (PID/local address/local port); this table does not expose the remote IP for every UDP datagram.
-- Read a local GeoIP .mmdb file selected by the user.
+- Read the automatically downloaded, locally stored DB-IP Lite City MMDB or a local GeoIP .mmdb file selected by the user.
+- Download the public DB-IP Lite City database and Natural Earth map-boundary datasets on first run (and check the DB-IP file for monthly refreshes). These requests contain no observed peer IPs, process names, PIDs or traffic statistics.
 - Write SwarmAtlas settings and statistics to the current user's application-data directory.
 - Render local statistics in the desktop UI.
 
@@ -27,11 +28,11 @@ The app should run as a normal Windows user. It must not request administrator p
 
 ## Network behavior
 
-The monitor itself should not bind/listen on a port or create tunnels. The current prototype makes no remote GeoIP requests and has no telemetry endpoint. The Rust extension calls GetExtendedTcpTable and GetExtendedUdpTable for read-only OS metadata; it does not install filters, hooks, drivers or services. If the native extension is absent or an API call is unavailable, the Python compatibility collector remains active.
+The monitor itself should not bind/listen on a port or create tunnels. The monitor makes no remote GeoIP lookup requests and has no telemetry endpoint. First-run data setup downloads static reference files from DB-IP and Natural Earth; observed peer addresses are never sent to those hosts. Subsequent lookups use the local MMDB database and local map-boundary files. The Rust extension calls GetExtendedTcpTable and GetExtendedUdpTable for read-only OS metadata; it does not install filters, hooks, drivers or services. If the native extension is absent or an API call is unavailable, the Python compatibility collector remains active.
 
 ## Local data
 
-Observed public IPs, process IDs/names, GeoIP metadata, settings and traffic history remain in the user's local SwarmAtlas data directory. They are not uploaded to a SwarmAtlas service. The update helper only contacts GitHub when the user runs it. When the optional Rust extension is already installed, the updater may download the public Windows wheel and its SHA-256 manifest from the repository's `native-latest` Release, verify the digest and install the local file. The first-run package installer downloads its declared dependencies from the configured package index. No peer IPs, process names, PIDs or usage statistics are included in these requests.
+Observed public IPs, process IDs/names, GeoIP metadata, settings and traffic history remain in the user's local SwarmAtlas data directory. They are not uploaded to a SwarmAtlas service. The update helper only contacts GitHub when the user runs it. The DB-IP City Lite dataset is licensed under CC BY 4.0 and is attributed in the map view; Natural Earth boundary data is public domain. When the optional Rust extension is already installed, the updater may download the public Windows wheel and its SHA-256 manifest from the repository's `native-latest` Release, verify the digest and install the local file. The first-run package installer downloads its declared dependencies from the configured package index. No peer IPs, process names, PIDs or usage statistics are included in these requests.
 
 SQLite history and diagnostic logs are not encrypted at rest by SwarmAtlas. They rely on the Windows user-profile file permissions. Anyone with read access to that Windows account can inspect saved peer IPs, process names and local paths. Do not publish the database or logs publicly.
 

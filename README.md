@@ -17,7 +17,9 @@ It does not:
 
 If Windows restricts access to the socket table, endpoint discovery may be incomplete. Interface byte counters continue to work. SwarmAtlas does not bypass OS permissions or elevate itself.
 
-The optional GeoIP feature reads a user-selected local .mmdb database. The application does not download it.
+The first run automatically downloads the free DB-IP Lite City MMDB from the official DB-IP download host. It includes country, first-level region, city and approximate latitude/longitude data. The database is stored at `%APPDATA%\\SwarmAtlas\\geoip\\dbip-city-lite.mmdb` and refreshed when it is older than 30 days. The published SHA-1 checksum and the MMDB structure are verified before the file is installed. A previously valid local copy remains available if an update cannot be downloaded.
+
+DB-IP Lite is licensed under CC BY 4.0 and requires attribution; SwarmAtlas displays the source in the map view. The first run also downloads Natural Earth country and Admin-1 region boundaries. Both map datasets are cached locally and can be rendered offline after setup. User-selected MMDB databases can still be added in GeoIP settings.
 
 Any future feature that needs packet capture or per-flow byte accounting must be separately reviewed, explicitly opt-in, and isolated from the default read-only monitor. No driver or network-filter installation will happen silently.
 
@@ -29,6 +31,9 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 | Current upload/download rate | Implemented |
 | Persistent local history (SQLite) | Implemented |
 | Active public remote endpoints | Implemented |
+| Offline country, region and city lookup (DB-IP Lite) | Downloaded automatically on first run; cached locally |
+| Zoomable world map with country and first-level region borders | Implemented; Natural Earth data cached locally |
+| Country and region endpoint summaries | Implemented |
 | TCP connection ownership (PID/process name) via the optional Rust core | Implemented |
 | UDP local socket ownership (PID) via the optional Rust core | Implemented |
 | Per-process destination history | Implemented |
@@ -38,7 +43,7 @@ Any future feature that needs packet capture or per-flow byte accounting must be
 | System-matched theme and language | Implemented |
 | Native Windows 11 Mica backdrop | Supported on Windows 11 22H2+ |
 | One-click project updater | Implemented |
-| World map with approximate endpoint locations | Implemented when GeoIP is configured |
+| World map with approximate endpoint locations | Implemented after the first-run GeoIP setup |
 | Per-destination / per-country byte totals | Not implemented |
 | Russian and English interface | Implemented (system language by default) |
 | Dark and light themes | Implemented; preference saved locally |
@@ -150,6 +155,12 @@ Close SwarmAtlas and double-click `update_project.bat` in the project folder.
 An internet connection is required. The updater contacts GitHub only after you run it. Peer IPs, process names, PIDs and traffic statistics are not uploaded. After a successful update, start the app with `run_windows.bat`.
 
 ## GeoIP setup
+
+On first launch, SwarmAtlas downloads the DB-IP Lite City MMDB and the Natural Earth country/region boundaries. The database includes country, first-level region, city and approximate coordinates; it is cached locally, verified, and checked for a refresh when older than 30 days. The map supports wheel zoom, drag panning and an enlarged view. Country and region tables count observed public endpoints, not traffic volume.
+
+DB-IP Lite is licensed under CC BY 4.0 and attribution is shown in the map. Natural Earth boundaries are public-domain data. Peer IP addresses are never sent to either source; only static reference files are downloaded.
+
+
 
 Open **GeoIP database** in the left sidebar and add one or more local `.mmdb` files. City, Country, ASN, and ISP database types can be combined. ASN/ISP details are shown in the recent-destinations table.
 
