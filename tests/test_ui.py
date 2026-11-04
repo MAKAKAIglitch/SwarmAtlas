@@ -410,3 +410,37 @@ def test_world_map_uses_spatial_hash_for_marker_hover(
 
     widget.deleteLater()
     app.processEvents()
+
+
+
+def test_main_window_skips_table_rebuild_for_reused_worker_lists(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    countries = [{"country": "United States", "peers": 4}]
+    regions = [{"region": "California", "country": "United States", "peers": 2}]
+    endpoints = [{
+        "ip": "8.8.8.8",
+        "protocol": "TCP",
+        "port": 443,
+        "country": "United States",
+        "city": "Mountain View",
+    }]
+
+    window._fill_countries(countries)
+    window._fill_regions(regions)
+    window._fill_endpoints(endpoints)
+
+    def unexpected_rebuild(*_args) -> None:
+        raise AssertionError("unchanged worker list should not rebuild its table")
+
+    monkeypatch.setattr("swarmatlas.ui.update_table", unexpected_rebuild)
+    window._fill_countries(countries)
+    window._fill_regions(regions)
+    window._fill_endpoints(endpoints)
+
+    window.close()
+    window.deleteLater()
+    app.processEvents()
