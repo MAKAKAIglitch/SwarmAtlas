@@ -58,7 +58,7 @@ Choose MMDB binary files, not CSV. Extract the `.mmdb` file from `.gz` or `.zip`
 
 ## Map and regions
 
-The dashboard uses MapLibre GL with the OpenFreeMap **Dark** vector style. The map fills its rectangular panel instead of cropping the world to a square. Vector tiles are rendered asynchronously by Qt WebEngine; its shared disk cache is capped at 128 MiB. Markers show observed public endpoints with approximate GeoIP coordinates. Click a marker to inspect its IP and available location details.
+The dashboard uses MapLibre GL with the OpenFreeMap **Dark** vector style. The map fills its rectangular panel instead of cropping the world to a square. Vector tiles are rendered asynchronously by Qt WebEngine; its shared disk cache is capped at 128 MiB. Markers show observed public endpoints with approximate GeoIP coordinates. Nearby endpoints are clustered at low zoom levels to keep the map responsive; click a cluster to zoom in or an individual marker to inspect its IP and available location details.
 
 OpenFreeMap does not require an API key. The map requests its style and vector tiles from OpenFreeMap infrastructure; MapLibre GL JavaScript and CSS are loaded from the pinned unpkg CDN release. These map requests disclose the user's public source IP and viewed tile coordinates to those services, but SwarmAtlas does not include observed destination IPs, process names, PIDs or traffic counters in map requests. The map credits OpenFreeMap, OpenMapTiles and OpenStreetMap contributors. The basemap is online; endpoint collection and local traffic history remain separate.
 
