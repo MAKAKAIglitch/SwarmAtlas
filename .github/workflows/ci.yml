@@ -21,7 +21,7 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - run: python -m pip install "maturin==1.16.0"
       - name: Check Rust formatting
-        run: rustfmt --check src/geo/geometry.rs src/platform/windows/interfaces.rs src/platform/windows/processes.rs
+        run: rustfmt --check src/geo/geometry.rs src/platform/windows/interfaces.rs src/platform/windows/processes.rs src/platform/windows/traceroute.rs
         working-directory: native
       - name: Test the Rust core
         run: cargo test
