@@ -517,13 +517,37 @@ window.maplibregl=maplibregl;
  map.on('load',function(){{
   map.addSource('swarm-endpoints',{{
    type:'geojson',data:{{type:'FeatureCollection',features:window.pendingSwarmFeatures||[]}},
-   cluster:true,clusterRadius:48,clusterMaxZoom:5
+   cluster:true,clusterRadius:48,clusterMaxZoom:5,
+   clusterProperties:{{
+    traffic_bps:['+', ['get','traffic_bps']],
+    traffic_upload_bps:['+', ['get','traffic_upload_bps']],
+    traffic_download_bps:['+', ['get','traffic_download_bps']]
+   }}
+  }});
+  map.addLayer({{
+   id:'endpoint-cluster-glow',type:'circle',source:'swarm-endpoints',
+   filter:['has','point_count'],
+   paint:{{
+    'circle-radius':['interpolate',['linear'],['get','traffic_bps'],
+      0,16,1024,21,16384,29,262144,38,4194304,48],
+    'circle-color':['case',
+      ['>', ['get','traffic_upload_bps'], ['*', ['get','traffic_download_bps'], 1.35]], '#ff9854',
+      ['>', ['get','traffic_download_bps'], ['*', ['get','traffic_upload_bps'], 1.35]], '#35c8ff',
+      ['>', ['get','traffic_bps'], 0], '#a78bfa',
+      '#60758d'],
+    'circle-opacity':['case',['>', ['get','traffic_bps'],0],0.55,0.18],
+    'circle-blur':0.78
+   }}
   }});
   map.addLayer({{
    id:'endpoint-clusters',type:'circle',source:'swarm-endpoints',
    filter:['has','point_count'],
    paint:{{
-    'circle-color':['step',['get','point_count'],'#2563eb',25,'#0ea5e9',100,'#0f766e'],
+    'circle-color':['case',
+      ['>', ['get','traffic_upload_bps'], ['*', ['get','traffic_download_bps'], 1.35]], '#ff9854',
+      ['>', ['get','traffic_download_bps'], ['*', ['get','traffic_upload_bps'], 1.35]], '#35c8ff',
+      ['>', ['get','traffic_bps'], 0], '#a78bfa',
+      '#2563eb'],
     'circle-radius':['step',['get','point_count'],14,25,19,100,24],
     'circle-stroke-color':'#071321','circle-stroke-width':1.5
    }}
