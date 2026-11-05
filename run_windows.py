@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 MIN_PYTHON = (3, 11)
 MAX_LOG_FILES = 10
-DEPENDENCY_PROBE = "import PySide6, psutil, geoip2, maxminddb, shapefile, swarmatlas"
+DEPENDENCY_PROBE = "import PySide6, PySide6.QtWebEngineCore, PySide6.QtWebEngineWidgets, psutil, geoip2, maxminddb, shapefile, swarmatlas"
 NATIVE_CAPABILITY_ASSERTION = "assert {'tcp-owner-pid', 'tcp-public-endpoints', 'udp-socket-count'} <= set(n.capabilities())"
 
 
