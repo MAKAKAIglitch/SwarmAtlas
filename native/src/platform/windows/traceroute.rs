@@ -1,6 +1,6 @@
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::io::{Error, ErrorKind, Result};
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 pub(crate) type TraceProbe = (Option<String>, Option<f64>, bool, String);
@@ -80,26 +80,54 @@ fn checksum(bytes: &[u8]) -> u16 {
     !(sum as u16)
 }
 
-fn echo_packet(target: SocketAddr, ttl: u32) -> Vec<u8> {
+fn icmpv6_checksum(source: Ipv6Addr, destination: Ipv6Addr, packet: &[u8]) -> u16 {
+    let mut pseudo_header = Vec::with_capacity(40 + 8 + packet.len());
+    pseudo_header.extend_from_slice(&source.octets());
+    pseudo_header.extend_from_slice(&destination.octets());
+    pseudo_header.extend_from_slice(&(packet.len() as u32).to_be_bytes());
+    pseudo_header.extend_from_slice(&[0, 0, 0, 58]);
+    pseudo_header.extend_from_slice(packet);
+    checksum(&pseudo_header)
+}
+
+fn echo_packet(target: SocketAddr, ttl: u32, source: Option<IpAddr>) -> Result<Vec<u8>> {
     let identifier = (std::process::id() & 0xffff) as u16;
     let sequence = ttl as u16;
-    match target {
-        SocketAddr::V4(_) => {
-            let mut packet = vec![8, 0, 0, 0];
-            packet.extend_from_slice(&identifier.to_be_bytes());
-            packet.extend_from_slice(&sequence.to_be_bytes());
-            packet.extend_from_slice(b"SwarmAtlas");
+    let mut packet = match target {
+        SocketAddr::V4(_) => vec![8, 0, 0, 0],
+        SocketAddr::V6(_) => vec![128, 0, 0, 0],
+    };
+    packet.extend_from_slice(&identifier.to_be_bytes());
+    packet.extend_from_slice(&sequence.to_be_bytes());
+    packet.extend_from_slice(b"SwarmAtlas");
+
+    match target.ip() {
+        IpAddr::V4(_) => {
             let sum = checksum(&packet);
             packet[2..4].copy_from_slice(&sum.to_be_bytes());
-            packet
         }
-        SocketAddr::V6(_) => {
-            let mut packet = vec![128, 0, 0, 0];
-            packet.extend_from_slice(&identifier.to_be_bytes());
-            packet.extend_from_slice(&sequence.to_be_bytes());
-            packet.extend_from_slice(b"SwarmAtlas");
-            packet
+        IpAddr::V6(destination) => {
+            let source = source
+                .and_then(|address| match address {
+                    IpAddr::V6(value) => Some(value),
+                    IpAddr::V4(_) => None,
+                })
+                .ok_or_else(|| Error::new(ErrorKind::AddrNotAvailable, "Could not select an IPv6 source address"))?;
+            let sum = icmpv6_checksum(source, destination, &packet);
+            packet[2..4].copy_from_slice(&sum.to_be_bytes());
         }
+    }
+    Ok(packet)
+}
+
+fn select_ipv6_source(target: SocketAddr) -> Result<Ipv6Addr> {
+    let destination = SocketAddr::new(target.ip(), UDP_BASE_PORT);
+    let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+    // UDP connect selects a route and local source address; it sends no datagram.
+    socket.connect(&SockAddr::from(destination))?;
+    match socket.local_addr()?.as_socket().map(|address| address.ip()) {
+        Some(IpAddr::V6(address)) if !address.is_unspecified() => Ok(address),
+        _ => Err(Error::new(ErrorKind::AddrNotAvailable, "Could not determine the IPv6 source address")),
     }
 }
 
@@ -264,7 +292,12 @@ fn tcp_probe(target: SocketAddr, ttl: u32, timeout: Duration, port: u16) -> Resu
 fn icmp_probe(target: SocketAddr, ttl: u32, timeout: Duration) -> Result<TraceProbe> {
     let socket = raw_socket(target, timeout).map_err(permission_hint)?;
     set_hop_limit(&socket, target, ttl)?;
-    let packet = echo_packet(target, ttl);
+    let source = if target.is_ipv6() {
+        Some(IpAddr::V6(select_ipv6_source(target)?))
+    } else {
+        None
+    };
+    let packet = echo_packet(target, ttl, source)?;
     socket.send_to(&packet, &SockAddr::from(target))?;
     receive_reply(&socket, target, timeout)
 }
@@ -313,7 +346,7 @@ pub(crate) fn traceroute_probe(
 
 #[cfg(test)]
 mod tests {
-    use super::{checksum, icmp_kind, is_destination_reply};
+    use super::{checksum, icmp_kind, icmpv6_checksum, is_destination_reply};
 
     #[test]
     fn ipv4_echo_checksum_is_valid() {
@@ -341,6 +374,14 @@ mod tests {
             "192.0.2.1".parse().unwrap(),
             "192.0.2.1".parse().unwrap()
         ));
+    }
+
+    #[test]
+    fn icmpv6_checksum_includes_ipv6_pseudo_header() {
+        let source: std::net::Ipv6Addr = "2001:db8::1".parse().unwrap();
+        let destination: std::net::Ipv6Addr = "2001:db8::2".parse().unwrap();
+        let packet = [128, 0, 0, 0, 0, 1, 0, 1];
+        assert_eq!(icmpv6_checksum(source, destination, &packet), 0x2446);
     }
 }
 
