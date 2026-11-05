@@ -35,6 +35,8 @@ The default DB-IP Lite mode performs local address lookups after its static MMDB
 
 The map loads MapLibre GL assets from the pinned unpkg release and the OpenFreeMap Dark style and vector tiles for the visible viewport. The relevant services see the user's public source IP and requested style/tile coordinates. These requests do not contain the application's observed destination IP list, process metadata or traffic counters. Attribution is displayed in the map. The application does not prefetch or bulk-download map tiles.
 
+When the user explicitly enables Application traffic statistics and the optional Rust TCP ESTATS capability is present, Windows TCP payload byte counters are read locally for established public TCP connections and stored in the local SQLite database. These counters contain byte totals, not packet contents. The resulting per-endpoint rates and process metadata are rendered locally in the map; they are not sent to OpenFreeMap, unpkg, GeoIP providers, or a SwarmAtlas server by map rendering.
+
 Online GeoIP is opt-in and sends the selected public destination IP to exactly one configured provider. The provider also sees the user's public source IP as the normal source of the HTTPS/HTTP request (and the account token when required):
 - IP-API.com (free endpoint: HTTP, non-commercial use only);
 - ipdata.co;
