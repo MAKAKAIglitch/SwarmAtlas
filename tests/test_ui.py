@@ -48,6 +48,8 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert widget._features[0]["geometry"]["coordinates"] == [-122.0, 37.4]
     assert widget._features[0]["properties"]["ip"] == "8.8.8.8"
     assert "maplibregl.Map" in WorldMap._map_html()
+    assert "cluster:true" in WorldMap._map_html()
+    assert "getClusterExpansionZoom" in WorldMap._map_html()
     widget.zoom_in()
     assert widget._zoom > 1.15
     widget.zoom_out()
