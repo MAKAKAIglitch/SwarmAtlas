@@ -83,6 +83,7 @@ if "%MODE%"=="1" (
     echo WARNING: Winsock reset affects the whole Windows system.
     echo Some VPNs, security tools or network applications may need repair
     echo or a restart after the reset.
+    echo A second RESET confirmation is required before Winsock is changed.
 )
 echo.
 echo The adapter may briefly lose connectivity.
