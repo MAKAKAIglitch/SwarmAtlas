@@ -313,7 +313,7 @@ pub(crate) fn traceroute_probe(
 
 #[cfg(test)]
 mod tests {
-    use super::{checksum, icmp_kind, is_destination_reply, resolve_target};
+    use super::{checksum, icmp_kind, is_destination_reply};
 
     #[test]
     fn ipv4_echo_checksum_is_valid() {
