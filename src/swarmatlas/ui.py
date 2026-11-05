@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections import OrderedDict
 import logging
+import json
 from pathlib import Path
 import math
 import shutil
@@ -17,17 +17,12 @@ from PySide6.QtWidgets import (
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
     QTableWidgetItem, QToolTip, QVBoxLayout, QWidget, QLineEdit,
 )
-from PySide6.QtNetwork import (
-    QNetworkAccessManager,
-    QNetworkDiskCache,
-    QNetworkReply,
-    QNetworkRequest,
-)
+from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
+from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .collector import NetworkWorker, available_interfaces, should_use_power_saver
 from .config import AppConfig, app_data_dir
 from .i18n import tr, translate_status
-from .map_geometry import build_boundary_paths
 from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
 from .utils import format_bytes, format_rate
 
@@ -396,565 +391,200 @@ class TrafficChart(QWidget):
 
 
 class WorldMap(QWidget):
-    """OSM-backed world map, limited to country, region and city-scale detail."""
+    """Responsive MapLibre map using OpenFreeMap's dark vector style."""
 
     location_selected = Signal(dict)
-    TILE_MIN_ZOOM = 2
-    TILE_MAX_ZOOM = 8
-    TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    TILE_USER_AGENT = b"SwarmAtlas/0.2"
-    MAX_MEMORY_TILES = 160
-    MAX_PENDING_TILES = 1
-    MAX_FAILED_TILE_ENTRIES = 512
-    MAX_TILE_RESPONSE_BYTES = 1024 * 1024
-    MAX_DISK_CACHE_BYTES = 128 * 1024 * 1024
-    MERCATOR_MAX_LAT = 85.0511287798066
+    MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
+    MAPLIBRE_VERSION = "5.6.2"
+    MAX_LOCATIONS = 2000
+    _profile_configured = False
 
-    def __init__(
-        self,
-        palette: dict[str, str],
-        empty_text: str,
-        cache_namespace: str = "main",
-    ):
+    def __init__(self, palette: dict[str, str], empty_text: str, cache_namespace: str = "main"):
         super().__init__()
+        del cache_namespace
         self.setMinimumHeight(300)
-        self.setMouseTracking(True)
         self.palette_colors = palette
         self.empty_text = empty_text
         self.locations: list[dict[str, Any]] = []
         self._location_source: list[dict[str, Any]] | None = None
         self._location_signature: tuple[tuple[Any, ...], ...] | None = None
-        self._location_world_points: list[QPointF] = []
-        self._location_grid: dict[tuple[int, int], list[int]] = {}
-        self._location_grid_key: tuple[float, int] | None = None
-        self._location_grid_cell_size = 1.0
-        self.country_path = QPainterPath()
-        self.region_path = QPainterPath()
-        self._has_boundaries = False
-        self._zoom = 1.0
-        self._pan = QPointF(0.0, 0.0)
-        self._drag_start: QPointF | None = None
-        self._drag_origin = QPointF(0.0, 0.0)
-        self._dragged = False
-        self._hovered_index: int | None = None
-        self._base_layer_cache: QPixmap | None = None
+        self._features: list[dict[str, Any]] = []
+        self._page_loaded = False
+        self._zoom = 1.15
 
-        # Qt's disk cache honours the tile server's HTTP cache headers and
-        # conditional requests. Only tiles visible in the current viewport
-        # are requested; there is no background or bulk tile download.
-        cache_directory = app_data_dir() / "osm-tile-cache" / cache_namespace
-        cache_directory.mkdir(parents=True, exist_ok=True)
-        self._tile_disk_cache = QNetworkDiskCache(self)
-        self._tile_disk_cache.setCacheDirectory(str(cache_directory))
-        self._tile_disk_cache.setMaximumCacheSize(self.MAX_DISK_CACHE_BYTES)
-        self._tile_manager = QNetworkAccessManager(self)
-        self._tile_manager.setCache(self._tile_disk_cache)
-        self._tile_pixmaps: OrderedDict[tuple[int, int, int], QPixmap] = OrderedDict()
-        self._tile_pending: set[tuple[int, int, int]] = set()
-        self._tile_retry_after: dict[tuple[int, int, int], float] = {}
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        if not WorldMap._profile_configured:
+            cache_dir = app_data_dir() / "maplibre-cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            profile = QWebEngineProfile.defaultProfile()
+            profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
+            profile.setHttpCacheMaximumSize(128 * 1024 * 1024)
+            profile.setCachePath(str(cache_dir / "http"))
+            profile.setPersistentStoragePath(str(cache_dir / "profile"))
+            profile.setHttpUserAgent(profile.httpUserAgent() + " SwarmAtlas/0.3")
+            WorldMap._profile_configured = True
 
-    def _invalidate_base_layer(self) -> None:
-        self._base_layer_cache = None
+        self.web_view = QWebEngineView(self)
+        self.web_view.setMinimumHeight(300)
+        self.web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.web_view.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptEnabled, True
+        )
+        self.web_view.loadFinished.connect(self._on_page_loaded)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.web_view, 1)
+        self.web_view.setHtml(self._map_html(), QUrl("https://swarmatlas.invalid/"))
 
-    def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
-        self.palette_colors = palette
-        self.empty_text = empty_text
-        self._invalidate_base_layer()
-        self.update()
+    @classmethod
+    def _map_html(cls) -> str:
+        return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@{cls.MAPLIBRE_VERSION}/dist/maplibre-gl.css">
+<style>
+html,body,#map {{width:100%;height:100%;margin:0;padding:0;overflow:hidden;background:#08111f}}
+.maplibregl-ctrl-group {{border:1px solid #26364b;background:#101c2b;box-shadow:0 2px 10px #0006}}
+.maplibregl-ctrl-group button {{background-color:#101c2b}}
+.maplibregl-ctrl-group button:hover {{background-color:#1d2d40}}
+.maplibregl-ctrl button .maplibregl-ctrl-icon {{filter:invert(.88)}}
+.maplibregl-ctrl-attrib {{color:#d1d9e4;background:#101c2bdc!important}}
+.maplibregl-ctrl-attrib a {{color:#8ccfff}}
+.maplibregl-popup-content {{color:#e8eef6;background:#111e2e;border:1px solid #30445c;border-radius:9px;font:13px 'Segoe UI',sans-serif}}
+.maplibregl-popup-tip {{border-top-color:#111e2e;border-bottom-color:#111e2e}}
+#map-status {{position:absolute;z-index:5;left:12px;bottom:12px;padding:7px 10px;border-radius:7px;color:#d7e2ef;background:#101c2bdc;font:12px 'Segoe UI',sans-serif;display:none}}
+</style>
+<script src="https://unpkg.com/maplibre-gl@{cls.MAPLIBRE_VERSION}/dist/maplibre-gl.js"
+ onerror="window.showMapError&&window.showMapError('MapLibre could not be loaded. Check internet access.')"></script>
+</head><body>
+<div id="map"></div><div id="map-status"></div>
+<script>
+(function() {{
+ const status=document.getElementById('map-status');
+ window.showMapError=function(message){{status.textContent=message;status.style.display='block';}};
+ if(!window.maplibregl){{window.showMapError('Map renderer unavailable. Check access to unpkg.com.');return;}}
+ const map=new maplibregl.Map({{
+  container:'map',style:'{cls.MAP_STYLE_URL}',center:[0,18],zoom:1.15,
+  minZoom:1,maxZoom:12,maxPitch:0,pitchWithRotate:false,dragRotate:false,
+  touchPitch:false,renderWorldCopies:true,attributionControl:false,cooperativeGestures:true
+ }});
+ window.swarmAtlasMap=map;
+ map.addControl(new maplibregl.NavigationControl({{showCompass:false,visualizePitch:false}}),'top-right');
+ map.addControl(new maplibregl.AttributionControl({{
+  compact:true,customAttribution:'<a href="https://openfreemap.org/" target="_blank">© OpenFreeMap</a>'
+ }}),'bottom-right');
+ map.on('load',function(){{
+  map.addSource('swarm-endpoints',{{type:'geojson',data:{{type:'FeatureCollection',features:window.pendingSwarmFeatures||[]}}}});
+  map.addLayer({{
+   id:'swarm-endpoints',type:'circle',source:'swarm-endpoints',
+   paint:{{
+    'circle-radius':['interpolate',['linear'],['zoom'],1,3.5,6,5.5,12,7],
+    'circle-color':'#48cfff','circle-opacity':0.9,
+    'circle-stroke-color':'#071321','circle-stroke-width':1.5
+   }}
+  }});
+  map.on('mouseenter','swarm-endpoints',function(){{map.getCanvas().style.cursor='pointer';}});
+  map.on('mouseleave','swarm-endpoints',function(){{map.getCanvas().style.cursor='';}});
+  map.on('click','swarm-endpoints',function(event){{
+   const feature=event.features&&event.features[0];if(!feature)return;
+   const p=feature.properties||{{}},box=document.createElement('div');
+   const ip=document.createElement('strong');ip.textContent=p.ip||'Endpoint';
+   const place=document.createElement('div');place.textContent=[p.city,p.region,p.country].filter(Boolean).join(', ');
+   box.append(ip,place);
+   new maplibregl.Popup({{closeButton:true,offset:10}}).setLngLat(event.lngLat).setDOMContent(box).addTo(map);
+  }});
+  window.swarmAtlasMapReady=true;status.style.display='none';
+  if(window.pendingSwarmFeatures)window.setSwarmEndpoints(window.pendingSwarmFeatures);
+ }});
+ map.on('error',function(event){{
+  if(!window.swarmAtlasMapReady&&event&&event.error)
+   window.showMapError('OpenFreeMap is not reachable. Check internet access.');
+ }});
+ window.setSwarmEndpoints=function(features){{
+  window.pendingSwarmFeatures=features||[];
+  const source=map.getSource('swarm-endpoints');
+  if(source)source.setData({{type:'FeatureCollection',features:window.pendingSwarmFeatures}});
+ }};
+}})();
+</script></body></html>"""
+
+    def _on_page_loaded(self, ok: bool) -> None:
+        self._page_loaded = bool(ok)
+        if not ok:
+            self.web_view.page().runJavaScript(
+                "window.showMapError&&window.showMapError('Map page failed to load.');"
+            )
+        elif self._features:
+            self._send_features()
+
+    def _send_features(self) -> None:
+        if self._page_loaded:
+            payload = json.dumps(self._features, ensure_ascii=False, separators=(",", ":"))
+            self.web_view.page().runJavaScript(
+                f"window.setSwarmEndpoints&&window.setSwarmEndpoints({payload});"
+            )
 
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
-        # NetworkWorker reuses these immutable snapshot lists between socket
-        # scans. Skip even signature construction while the source object is the same.
         if locations is self._location_source:
             return
-        valid: list[dict[str, Any]] = []
+        features: list[dict[str, Any]] = []
         signature: list[tuple[Any, ...]] = []
-        for item in locations:
+        valid: list[dict[str, Any]] = []
+        for item in locations[:self.MAX_LOCATIONS]:
             try:
-                latitude = float(item["latitude"])
-                longitude = float(item["longitude"])
+                lat, lon = float(item["latitude"]), float(item["longitude"])
             except (KeyError, TypeError, ValueError, OverflowError):
                 continue
-            if not (-90.0 <= latitude <= 90.0 and -180.0 <= longitude <= 180.0):
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                 continue
-            valid.append(item)
-            signature.append((
-                str(item.get("ip", "")),
-                round(latitude, 6),
-                round(longitude, 6),
+            ip = str(item.get("ip") or "")
+            city, region, country = (
                 str(item.get("city") or ""),
                 str(item.get("region") or ""),
                 str(item.get("country") or ""),
-            ))
-
-        new_signature = tuple(signature)
-        if new_signature == self._location_signature:
-            # Remember the latest immutable snapshot object as well. Without
-            # this assignment, an identical-but-new list would be re-scanned
-            # for a signature on every subsequent one-second UI update.
-            self._location_source = locations
-            return
-
-        self.locations = valid
+            )
+            valid.append(item)
+            signature.append((ip, round(lat, 6), round(lon, 6), city, region, country))
+            features.append({
+                "type":"Feature",
+                "geometry":{"type":"Point","coordinates":[lon,lat]},
+                "properties":{"ip":ip,"city":city,"region":region,"country":country},
+            })
         self._location_source = locations
-        self._location_signature = new_signature
-        self._location_world_points = [
-            self._normalized_point(float(item["longitude"]), float(item["latitude"]))
-            for item in valid
-        ]
-        self._location_grid = {}
-        self._location_grid_key = None
-        self._hovered_index = None
-        self.update()
+        if tuple(signature) == self._location_signature:
+            return
+        self.locations = valid
+        self._location_signature = tuple(signature)
+        self._features = features
+        self._send_features()
 
-    @classmethod
-    def _normalized_point(cls, longitude: float, latitude: float) -> QPointF:
-        """Project WGS84 coordinates to the same Web Mercator world as OSM tiles."""
-        latitude = max(-cls.MERCATOR_MAX_LAT, min(cls.MERCATOR_MAX_LAT, latitude))
-        radians = math.radians(latitude)
-        x = (longitude + 180.0) / 360.0
-        y = (1.0 - math.asinh(math.tan(radians)) / math.pi) / 2.0
-        return QPointF(x, y)
+    def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
+        self.palette_colors, self.empty_text = palette, empty_text
 
-    @classmethod
-    def _tile_zoom_for_scale(cls, scale: float) -> int:
-        """Start at a world view and stop at z8 (city/region, not street/building)."""
-        safe_scale = max(1.0, float(scale))
-        level = cls.TILE_MIN_ZOOM + int(math.floor(math.log2(safe_scale)))
-        return max(cls.TILE_MIN_ZOOM, min(cls.TILE_MAX_ZOOM, level))
-
-    def set_boundaries(
-        self,
-        countries: list[list[tuple[float, float]]],
-        regions: list[list[tuple[float, float]]],
-    ) -> None:
-        country_path, region_path = build_boundary_paths(countries, regions)
-        self.set_boundary_paths(country_path, region_path)
+    def set_boundaries(self, countries: list[list[tuple[float, float]]],
+                       regions: list[list[tuple[float, float]]]) -> None:
+        del countries, regions
 
     def set_boundary_paths(self, countries: QPainterPath, regions: QPainterPath) -> None:
-        self.country_path = QPainterPath(countries)
-        self.region_path = QPainterPath(regions)
-        self._has_boundaries = not self.country_path.isEmpty()
-        self._invalidate_base_layer()
-        self.update()
+        del countries, regions
 
     def copy_boundaries_from(self, other: "WorldMap") -> None:
-        self.set_boundary_paths(other.country_path, other.region_path)
-        self._tile_pixmaps = OrderedDict(other._tile_pixmaps)
-
-    def _map_rect(self) -> QRectF:
-        # OSM's Web Mercator tile matrix is square. Keep the projection square
-        # rather than stretching the map into an incorrect 2:1 equirectangular view.
-        area = QRectF(self.rect()).adjusted(8, 6, -8, -6)
-        size = min(area.width(), area.height())
-        return QRectF(
-            area.center().x() - size / 2.0,
-            area.center().y() - size / 2.0,
-            size,
-            size,
-        )
-
-    def _screen_point_from_normalized(
-        self, normalized: QPointF, rect: QRectF | None = None
-    ) -> QPointF:
-        map_rect = rect or self._map_rect()
-        world_size = map_rect.width() * self._zoom
-        return QPointF(
-            map_rect.center().x() + self._pan.x() + (normalized.x() - 0.5) * world_size,
-            map_rect.center().y() + self._pan.y() + (normalized.y() - 0.5) * world_size,
-        )
-
-    def _screen_point(self, longitude: float, latitude: float) -> QPointF:
-        return self._screen_point_from_normalized(
-            self._normalized_point(longitude, latitude)
-        )
-
-    def _zoom_at(self, position: QPointF, factor: float) -> None:
-        old_zoom = self._zoom
-        new_zoom = max(1.0, min(64.0, old_zoom * factor))
-        if abs(new_zoom - old_zoom) < 0.0001:
-            return
-
-        center = self._map_rect().center()
-        anchored_x = (position.x() - center.x() - self._pan.x()) / old_zoom
-        anchored_y = (position.y() - center.y() - self._pan.y()) / old_zoom
-        self._zoom = new_zoom
-        self._pan = QPointF(
-            position.x() - center.x() - anchored_x * new_zoom,
-            position.y() - center.y() - anchored_y * new_zoom,
-        )
-        self._invalidate_base_layer()
-        self.update()
+        del other
 
     def zoom_in(self) -> None:
-        self._zoom_at(self._map_rect().center(), 1.35)
+        self._zoom = min(12.0, self._zoom + 1.0)
+        self.web_view.page().runJavaScript("window.swarmAtlasMap&&window.swarmAtlasMap.zoomIn();")
 
     def zoom_out(self) -> None:
-        self._zoom_at(self._map_rect().center(), 1.0 / 1.35)
+        self._zoom = max(1.0, self._zoom - 1.0)
+        self.web_view.page().runJavaScript("window.swarmAtlasMap&&window.swarmAtlasMap.zoomOut();")
 
     def reset_view(self) -> None:
-        self._zoom = 1.0
-        self._pan = QPointF(0.0, 0.0)
-        self._invalidate_base_layer()
-        self.update()
-
-    def _request_tile(self, zoom: int, x: int, y: int) -> None:
-        key = (zoom, x, y)
-        if key in self._tile_pixmaps or key in self._tile_pending:
-            return
-        if self._tile_retry_after.get(key, 0.0) > time.monotonic():
-            return
-        # Keep the public OSM tile service load low, even during rapid panning.
-        if len(self._tile_pending) >= self.MAX_PENDING_TILES:
-            return
-
-        request = QNetworkRequest(
-            QUrl(self.TILE_URL.format(z=zoom, x=x, y=y))
+        self._zoom = 1.15
+        self.web_view.page().runJavaScript(
+            "window.swarmAtlasMap&&window.swarmAtlasMap.flyTo({center:[0,18],zoom:1.15,duration:250});"
         )
-        request.setRawHeader(b"User-Agent", self.TILE_USER_AGENT)
-        request.setRawHeader(b"Accept", b"image/png")
-        reply = self._tile_manager.get(request)
-        self._tile_pending.add(key)
-        reply.downloadProgress.connect(
-            lambda received, _total, network_reply=reply:
-                network_reply.abort()
-                if received > self.MAX_TILE_RESPONSE_BYTES else None
-        )
-        reply.finished.connect(
-            lambda tile_key=key, network_reply=reply:
-                self._tile_request_finished(tile_key, network_reply)
-        )
-
-    def _tile_request_finished(self, key: tuple[int, int, int], reply: QNetworkReply) -> None:
-        self._tile_pending.discard(key)
-        try:
-            if reply.error() == QNetworkReply.NetworkError.NoError:
-                payload = bytes(reply.readAll())
-                pixmap = QPixmap()
-                if (
-                    payload
-                    and len(payload) <= self.MAX_TILE_RESPONSE_BYTES
-                    and pixmap.loadFromData(payload, "PNG")
-                ):
-                    self._tile_pixmaps[key] = pixmap
-                    self._tile_pixmaps.move_to_end(key)
-                    while len(self._tile_pixmaps) > self.MAX_MEMORY_TILES:
-                        self._tile_pixmaps.popitem(last=False)
-                    self._tile_retry_after.pop(key, None)
-                    self._invalidate_base_layer()
-                else:
-                    self._tile_retry_after[key] = time.monotonic() + 300.0
-                    if len(self._tile_retry_after) > self.MAX_FAILED_TILE_ENTRIES:
-                        oldest = next(iter(self._tile_retry_after))
-                        self._tile_retry_after.pop(oldest, None)
-            else:
-                # Back off on timeouts, offline mode, rate limits and server errors.
-                self._tile_retry_after[key] = time.monotonic() + 120.0
-        finally:
-            reply.deleteLater()
-            self.update()
-
-    def _draw_fallback_land(self, painter: QPainter, map_rect: QRectF) -> None:
-        """Keep a locally available map visible while OSM tiles are loading/offline."""
-        painter.save()
-        painter.setClipRect(map_rect)
-        painter.translate(
-            map_rect.center().x() + self._pan.x(),
-            map_rect.center().y() + self._pan.y(),
-        )
-        world_size = map_rect.width() * self._zoom
-        painter.scale(world_size, world_size)
-        painter.translate(-0.5, -0.5)
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(self.palette_colors["land"]))
-        if self._has_boundaries:
-            painter.drawPath(self.country_path)
-        else:
-            continents = [
-                [(-168, 70), (-145, 72), (-125, 55), (-110, 50), (-95, 20), (-80, 8), (-78, 28), (-60, 48), (-82, 60), (-105, 72), (-135, 73)],
-                [(-82, 12), (-65, 8), (-50, -5), (-45, -25), (-58, -55), (-72, -35), (-78, -5)],
-                [(-12, 72), (35, 70), (70, 55), (105, 58), (145, 48), (165, 62), (178, 48), (150, 20), (120, 5), (100, 10), (80, -5), (55, 10), (42, 32), (20, 35), (5, 55)],
-                [(-18, 35), (12, 37), (38, 20), (48, 0), (35, -35), (18, -35), (5, -5), (-10, 10)],
-                [(112, -12), (153, -10), (155, -40), (132, -45), (114, -30)],
-                [(-52, 82), (-25, 80), (-38, 60)],
-            ]
-            for polygon in continents:
-                path = QPainterPath()
-                for index, (longitude, latitude) in enumerate(polygon):
-                    point = self._normalized_point(longitude, latitude)
-                    if index == 0:
-                        path.moveTo(point)
-                    else:
-                        path.lineTo(point)
-                path.closeSubpath()
-                painter.drawPath(path)
-        painter.restore()
-
-    def _draw_osm_tiles(self, painter: QPainter, area: QRectF, map_rect: QRectF) -> None:
-        zoom = self._tile_zoom_for_scale(self._zoom)
-        tiles_per_axis = 1 << zoom
-        world_size = map_rect.width() * self._zoom
-        tile_size = world_size / tiles_per_axis
-        origin_x = map_rect.center().x() + self._pan.x() - world_size / 2.0
-        origin_y = map_rect.center().y() + self._pan.y() - world_size / 2.0
-        visible = map_rect.intersected(area)
-        if visible.isEmpty() or tile_size <= 0:
-            return
-
-        first_x = math.floor((visible.left() - origin_x) / tile_size)
-        last_x = math.ceil((visible.right() - origin_x) / tile_size) - 1
-        first_y = math.floor((visible.top() - origin_y) / tile_size)
-        last_y = math.ceil((visible.bottom() - origin_y) / tile_size) - 1
-
-        painter.save()
-        painter.setClipRect(visible)
-        for tile_y in range(max(0, first_y), min(tiles_per_axis - 1, last_y) + 1):
-            for world_tile_x in range(first_x, last_x + 1):
-                tile_x = world_tile_x % tiles_per_axis
-                key = (zoom, tile_x, tile_y)
-                target = QRectF(
-                    origin_x + world_tile_x * tile_size,
-                    origin_y + tile_y * tile_size,
-                    tile_size,
-                    tile_size,
-                )
-                pixmap = self._tile_pixmaps.get(key)
-                if pixmap is not None:
-                    self._tile_pixmaps.move_to_end(key)
-                    painter.drawPixmap(
-                        target,
-                        pixmap,
-                        QRectF(0.0, 0.0, float(pixmap.width()), float(pixmap.height())),
-                    )
-                else:
-                    self._request_tile(zoom, tile_x, tile_y)
-        painter.restore()
-
-    def _draw_administrative_boundaries(self, painter: QPainter, map_rect: QRectF) -> None:
-        if not self._has_boundaries:
-            return
-        painter.save()
-        painter.setClipRect(map_rect)
-        painter.translate(
-            map_rect.center().x() + self._pan.x(),
-            map_rect.center().y() + self._pan.y(),
-        )
-        world_size = map_rect.width() * self._zoom
-        painter.scale(world_size, world_size)
-        painter.translate(-0.5, -0.5)
-
-        country_pen = QPen(QColor(self.palette_colors["muted"]), 0.8)
-        country_pen.setCosmetic(True)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(country_pen)
-        painter.drawPath(self.country_path)
-
-        region_pen = QPen(QColor(self.palette_colors["line"]), 0.55)
-        region_pen.setCosmetic(True)
-        painter.setPen(region_pen)
-        painter.drawPath(self.region_path)
-        painter.restore()
-
-    def _ensure_location_grid(self, map_rect: QRectF) -> float:
-        """Build a screen-scale spatial hash so hover checks inspect nearby markers only."""
-        world_size = map_rect.width() * self._zoom
-        if world_size <= 0.0:
-            return 1.0
-
-        # A bucket is one 13-pixel hover radius wide. Only the pointer's
-        # current bucket and its eight neighbours can contain a hit.
-        cell_size = 13.0 / world_size
-        key = (round(world_size, 4), len(self._location_world_points))
-        if key != self._location_grid_key:
-            inverse_cell_size = 1.0 / cell_size
-            grid: dict[tuple[int, int], list[int]] = {}
-            for index, point in enumerate(self._location_world_points):
-                cell = (
-                    math.floor(point.x() * inverse_cell_size),
-                    math.floor(point.y() * inverse_cell_size),
-                )
-                grid.setdefault(cell, []).append(index)
-            self._location_grid = grid
-            self._location_grid_key = key
-            self._location_grid_cell_size = cell_size
-        return world_size
-
-    def _nearest_location(self, position: QPointF) -> int | None:
-        map_rect = self._map_rect()
-        if not map_rect.contains(position) or not self._location_world_points:
-            return None
-
-        world_size = self._ensure_location_grid(map_rect)
-        if world_size <= 0.0:
-            return None
-
-        center = map_rect.center()
-        mouse_x = (
-            position.x() - center.x() - self._pan.x()
-        ) / world_size + 0.5
-        mouse_y = (
-            position.y() - center.y() - self._pan.y()
-        ) / world_size + 0.5
-        cell_size = self._location_grid_cell_size
-        cell_x = math.floor(mouse_x / cell_size)
-        cell_y = math.floor(mouse_y / cell_size)
-        nearest_index: int | None = None
-        nearest_distance_squared = 13.0 * 13.0
-
-        for y in range(cell_y - 1, cell_y + 2):
-            for x in range(cell_x - 1, cell_x + 2):
-                for index in self._location_grid.get((x, y), ()):
-                    point = self._location_world_points[index]
-                    dx = (point.x() - mouse_x) * world_size
-                    dy = (point.y() - mouse_y) * world_size
-                    distance_squared = dx * dx + dy * dy
-                    if distance_squared < nearest_distance_squared:
-                        nearest_index = index
-                        nearest_distance_squared = distance_squared
-        return nearest_index
-
-    @staticmethod
-    def _location_text(item: dict[str, Any]) -> str:
-        details = [
-            str(item.get("city") or ""),
-            str(item.get("region") or ""),
-            str(item.get("country") or ""),
-        ]
-        location = ", ".join(value for value in details if value)
-        return f"{item.get('ip', '')} · {location}" if location else str(item.get("ip", ""))
-
-    def paintEvent(self, event: Any) -> None:
-        del event
-        colors = self.palette_colors
-        area = self.rect().adjusted(8, 6, -8, -6)
-        map_rect = self._map_rect()
-
-        # The world background, OSM tiles and thousands of country/region
-        # segments are stable while the pointer moves. Rasterize them once and
-        # redraw only endpoint markers/tooltips until the view actually changes.
-        if self._base_layer_cache is None or self._base_layer_cache.size() != self.size():
-            base_started = time.perf_counter()
-            cache = QPixmap(self.size())
-            cache.fill(QColor(colors["surface_alt"]))
-            base_painter = QPainter(cache)
-            base_painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            base_painter.fillRect(area, QColor(colors["surface_alt"]))
-            self._draw_fallback_land(base_painter, map_rect)
-            self._draw_osm_tiles(base_painter, area, map_rect)
-            self._draw_administrative_boundaries(base_painter, map_rect)
-            base_painter.end()
-            self._base_layer_cache = cache
-            base_duration_ms = (time.perf_counter() - base_started) * 1000.0
-            if base_duration_ms >= 25.0:
-                _LOGGER.warning(
-                    "Map base layer rebuild took %.1f ms at %dx%d, zoom %.2f",
-                    base_duration_ms,
-                    self.width(),
-                    self.height(),
-                    self._zoom,
-                )
-
-        paint_started = time.perf_counter()
-        painter = QPainter(self)
-        painter.drawPixmap(0, 0, self._base_layer_cache)
-
-        painter.save()
-        painter.setClipRect(map_rect)
-        if not self.locations:
-            painter.setPen(QColor(colors["muted"]))
-            painter.drawText(
-                map_rect.adjusted(8, 8, -8, -8),
-                Qt.AlignmentFlag.AlignCenter,
-                self.empty_text,
-            )
-        else:
-            marker_bounds = map_rect.adjusted(-8, -8, 8, 8)
-            painter.setPen(QPen(QColor(colors["accent"]), 1))
-            painter.setBrush(QColor(colors["accent_light"]))
-            for index, normalized in enumerate(self._location_world_points):
-                point = self._screen_point_from_normalized(normalized, map_rect)
-                if not marker_bounds.contains(point):
-                    continue
-                radius = 7.0 if index == self._hovered_index else 4.8
-                painter.drawEllipse(point, radius, radius)
-
-        if self._zoom > 1.01:
-            painter.setPen(QColor(colors["muted"]))
-            painter.drawText(
-                map_rect.adjusted(0, 6, -8, 0),
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
-                f"OSM z{self._tile_zoom_for_scale(self._zoom)}/{self.TILE_MAX_ZOOM}",
-            )
-        painter.restore()
-        painter.end()
-        paint_duration_ms = (time.perf_counter() - paint_started) * 1000.0
-        if paint_duration_ms >= 33.0:
-            _LOGGER.warning(
-                "Map paint took %.1f ms for %d markers, zoom %.2f",
-                paint_duration_ms,
-                len(self._location_world_points),
-                self._zoom,
-            )
-
-    def wheelEvent(self, event: Any) -> None:
-        delta = event.angleDelta().y()
-        if delta:
-            self._zoom_at(event.position(), 1.2 if delta > 0 else (1.0 / 1.2))
-        event.accept()
-
-    def mousePressEvent(self, event: Any) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start = event.position()
-            self._drag_origin = QPointF(self._pan)
-            self._dragged = False
-            self.setCursor(Qt.CursorShape.ClosedHandCursor)
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: Any) -> None:
-        if self._drag_start is not None:
-            delta = event.position() - self._drag_start
-            if abs(delta.x()) + abs(delta.y()) > 3.0:
-                self._dragged = True
-            if self._dragged:
-                self._pan = QPointF(
-                    self._drag_origin.x() + delta.x(),
-                    self._drag_origin.y() + delta.y(),
-                )
-                self._invalidate_base_layer()
-                self.update()
-            event.accept()
-            return
-
-        hovered = self._nearest_location(event.position())
-        if hovered != self._hovered_index:
-            self._hovered_index = hovered
-            self.setToolTip(
-                self._location_text(self.locations[hovered]) if hovered is not None else ""
-            )
-            self.update()
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: Any) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self._drag_start is not None:
-            if not self._dragged:
-                selected = self._nearest_location(event.position())
-                if selected is not None:
-                    item = self.locations[selected]
-                    self.location_selected.emit(dict(item))
-                    QToolTip.showText(
-                        event.globalPosition().toPoint(),
-                        self._location_text(item),
-                        self,
-                    )
-            self._drag_start = None
-            self.setCursor(Qt.CursorShape.OpenHandCursor)
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
 
 
 class WorldMapDialog(QDialog):
@@ -968,8 +598,8 @@ class WorldMapDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(1080, 920)
-        self.setMinimumSize(820, 720)
+        self.resize(1280, 760)
+        self.setMinimumSize(900, 600)
 
         palette = source_map.palette_colors
         layout = QVBoxLayout(self)
@@ -1036,14 +666,11 @@ class MainWindow(QMainWindow):
         self._mica_applied = False
         self._map_dialog: WorldMapDialog | None = None
         self._last_snapshot: dict[str, Any] = {}
-        self._saved_country_path = QPainterPath()
-        self._saved_region_path = QPainterPath()
         self._apply_theme()
         self.worker = NetworkWorker(self.config)
         self.worker.snapshot_ready.connect(self.update_snapshot)
         self.worker.status_changed.connect(self.update_geo_status)
         self.worker.startup_ready.connect(self._on_worker_startup)
-        self.worker.map_data_ready.connect(self._set_map_boundaries)
 
         application = QGuiApplication.instance()
         if application is not None:
@@ -1118,11 +745,6 @@ class MainWindow(QMainWindow):
             )
         self._apply_theme()
         self._build_ui()
-        if not self._saved_country_path.isEmpty():
-            self.world_map.set_boundary_paths(
-                self._saved_country_path,
-                self._saved_region_path,
-            )
         if self._last_snapshot:
             self.world_map.set_locations(self._last_snapshot.get("active_endpoints", []))
         self._fade_in_rebuilt_ui()
@@ -1607,18 +1229,6 @@ class MainWindow(QMainWindow):
     def update_geo_status(self, status: str) -> None:
         self.statusBar().showMessage(translate_status(status, self.current_language))
 
-    def _set_map_boundaries(self, countries: object, regions: object) -> None:
-        if not isinstance(countries, QPainterPath) or not isinstance(regions, QPainterPath):
-            return
-        self.world_map.set_boundary_paths(countries, regions)
-        self._saved_country_path = QPainterPath(self.world_map.country_path)
-        self._saved_region_path = QPainterPath(self.world_map.region_path)
-        if self._map_dialog is not None:
-            self._map_dialog.map_widget.set_boundary_paths(
-                self._saved_country_path,
-                self._saved_region_path,
-            )
-
     def _map_attribution_html(self) -> str:
         sources = {
             "dbip": ("DB-IP.com", "https://db-ip.com"),
@@ -1631,7 +1241,8 @@ class MainWindow(QMainWindow):
         }
         name, url = sources.get(self.config.geoip_provider, sources["dbip"])
         source_link = f'<a href="{url}">{name}</a>'
-        natural_earth = '<a href="https://www.naturalearthdata.com/">Natural Earth</a>'
+        natural_earth = ('<a href="https://openfreemap.org/">OpenFreeMap</a> · '
+                         '<a href="https://openmaptiles.org/">OpenMapTiles</a>')
         osm_attribution = (
             '<a href="https://www.openstreetmap.org/copyright">'
             "© OpenStreetMap contributors</a>"
