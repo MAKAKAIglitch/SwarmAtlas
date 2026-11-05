@@ -59,3 +59,35 @@ def test_parse_traceroute_line_parses_ipv6_hop() -> None:
     assert reply is not None
     assert reply["address"] == "2001:4860:4860::8888"
     assert reply["status"] == "reached"
+
+
+def test_native_traceroute_wrapper_validates_and_normalizes_result(monkeypatch) -> None:
+    from swarmatlas import native
+
+    class FakeNative:
+        @staticmethod
+        def traceroute_probe(target, method, ttl, timeout_ms, port, family):
+            assert (target, method, ttl, timeout_ms, port, family) == (
+                "example.com", "tcp", 2, 750, 8443, 6
+            )
+            return ("2001:db8::1", 12.5, False, "replied")
+
+    monkeypatch.setattr(native, "_native", FakeNative())
+    monkeypatch.setattr(native, "NATIVE_TRACEROUTE", True)
+    assert native.traceroute_probe(
+        "example.com", "tcp", 2, 750, 8443, 6
+    ) == {
+        "address": "2001:db8::1",
+        "rtt": 12.5,
+        "reached": False,
+        "status": "replied",
+    }
+
+
+def test_native_traceroute_wrapper_rejects_invalid_family(monkeypatch) -> None:
+    from swarmatlas import native
+
+    monkeypatch.setattr(native, "NATIVE_TRACEROUTE", True)
+    monkeypatch.setattr(native, "_native", object())
+    with pytest.raises(ValueError, match="family"):
+        native.traceroute_probe("example.com", "icmp", 1, family=5)
