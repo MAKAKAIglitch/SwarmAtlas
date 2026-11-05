@@ -447,7 +447,15 @@ html,body,#map {{width:100%;height:100%;margin:0;padding:0;overflow:hidden;backg
 .maplibregl-ctrl button .maplibregl-ctrl-icon {{filter:invert(.88)}}
 .maplibregl-ctrl-attrib {{color:#d1d9e4;background:#101c2bdc!important}}
 .maplibregl-ctrl-attrib a {{color:#8ccfff}}
-.maplibregl-popup-content {{color:#e8eef6;background:#111e2e;border:1px solid #30445c;border-radius:9px;font:13px 'Segoe UI',sans-serif}}
+ .maplibregl-popup-content {{color:#e8eef6;background:#111e2e;border:1px solid #30445c;border-radius:11px;font:13px 'Segoe UI',sans-serif;padding:13px;box-shadow:0 8px 32px #0009}}
+.swarm-popup {{min-width:245px;max-width:310px}}
+.swarm-popup-title {{font-size:14px;font-weight:700;color:#f1f6fc;margin-bottom:3px;overflow-wrap:anywhere}}
+.swarm-popup-subtitle {{font-size:11px;color:#9aadc2;margin-bottom:10px}}
+.swarm-popup-section {{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6f91b5;margin:10px 0 5px}}
+.swarm-popup-row {{display:flex;justify-content:space-between;gap:14px;padding:3px 0;border-bottom:1px solid #26364b}}
+.swarm-popup-label {{color:#91a4ba;font-size:11px}}
+.swarm-popup-value {{color:#e8eef6;font-size:11px;text-align:right;overflow-wrap:anywhere;max-width:175px}}
+.swarm-popup-traffic {{font-weight:700;color:#8bdcff}}
 .maplibregl-popup-tip {{border-top-color:#111e2e;border-bottom-color:#111e2e}}
 #map-status {{position:absolute;z-index:5;left:12px;bottom:12px;padding:7px 10px;border-radius:7px;color:#d7e2ef;background:#101c2bdc;font:12px 'Segoe UI',sans-serif;display:none}}
 </style>
@@ -471,7 +479,8 @@ window.maplibregl=maplibregl;
  const map=new maplibregl.Map({{
   container:'map',style:'{cls.MAP_STYLE_URL}',center:[0,18],zoom:1.15,
   minZoom:1,maxZoom:12,maxPitch:0,pitchWithRotate:false,dragRotate:false,
-  touchPitch:false,renderWorldCopies:true,attributionControl:false
+  touchPitch:false,renderWorldCopies:true,attributionControl:false,
+  fadeDuration:0,refreshExpiredTiles:false,maxTileCacheSize:64,maxParallelImageRequests:8
  }});
  window.swarmAtlasMap=map;
  map.addControl(new maplibregl.NavigationControl({{showCompass:false,visualizePitch:false}}),'top-right');
@@ -499,11 +508,32 @@ window.maplibregl=maplibregl;
    paint:{{'text-color':'#ffffff'}}
   }});
   map.addLayer({{
+   id:'endpoint-glow',type:'circle',source:'swarm-endpoints',
+   filter:['!', ['has','point_count']],
+   paint:{{
+    'circle-radius':['interpolate',['linear'],['get','traffic_bps'],
+      0,7,64,11,1024,17,16384,25,262144,34,4194304,43],
+    'circle-color':['case',
+      ['>', ['get','traffic_upload_bps'], ['*', ['get','traffic_download_bps'], 1.35]], '#ff9854',
+      ['>', ['get','traffic_download_bps'], ['*', ['get','traffic_upload_bps'], 1.35]], '#35c8ff',
+      ['>', ['get','traffic_bps'], 0], '#a78bfa',
+      '#60758d'],
+    'circle-opacity':['case',['>', ['get','traffic_bps'],0],0.48,0.12],
+    'circle-blur':0.82
+   }}
+  }});
+  map.addLayer({{
    id:'swarm-endpoints',type:'circle',source:'swarm-endpoints',
    filter:['!', ['has','point_count']],
    paint:{{
-    'circle-radius':['interpolate',['linear'],['zoom'],1,3.5,6,5.5,12,7],
-    'circle-color':'#48cfff','circle-opacity':0.9,
+    'circle-radius':['interpolate',['linear'],['get','traffic_bps'],
+      0,3.2,64,4.5,1024,6,16384,8,262144,10,4194304,12],
+    'circle-color':['case',
+      ['>', ['get','traffic_upload_bps'], ['*', ['get','traffic_download_bps'], 1.35]], '#ffad70',
+      ['>', ['get','traffic_download_bps'], ['*', ['get','traffic_upload_bps'], 1.35]], '#5bd6ff',
+      ['>', ['get','traffic_bps'], 0], '#c3a7ff',
+      '#8aa0b8'],
+    'circle-opacity':['case',['>', ['get','traffic_bps'],0],1,0.72],
     'circle-stroke-color':'#071321','circle-stroke-width':1.5
    }}
   }});
@@ -518,10 +548,53 @@ window.maplibregl=maplibregl;
   map.on('click','swarm-endpoints',function(event){{
    const feature=event.features&&event.features[0];if(!feature)return;
    const p=feature.properties||{{}},box=document.createElement('div');
-   const ip=document.createElement('strong');ip.textContent=p.ip||'Endpoint';
-   const place=document.createElement('div');place.textContent=[p.city,p.region,p.country].filter(Boolean).join(', ');
-   box.append(ip,place);
-   new maplibregl.Popup({{closeButton:true,offset:10}}).setLngLat(event.lngLat).setDOMContent(box).addTo(map);
+   box.className='swarm-popup';
+   const title=document.createElement('div');title.className='swarm-popup-title';
+   title.textContent=p.ip||'Endpoint';box.append(title);
+   const subtitle=document.createElement('div');subtitle.className='swarm-popup-subtitle';
+   subtitle.textContent=[p.city,p.region,p.country].filter(Boolean).join(', ')||'Location unavailable';
+   box.append(subtitle);
+   const bytes=function(value){{
+    let n=Math.max(0,Number(value)||0),units=['B','KB','MB','GB','TB'],i=0;
+    while(n>=1024&&i<units.length-1){{n/=1024;i++;}}
+    return (i===0?Math.round(n):n.toFixed(1))+' '+units[i];
+   }};
+   const rate=function(value){{return bytes(value)+'/s';}};
+   const section=function(label){{
+    const el=document.createElement('div');el.className='swarm-popup-section';el.textContent=label;box.append(el);
+   }};
+   const row=function(label,value,traffic){{
+    const line=document.createElement('div');line.className='swarm-popup-row';
+    const key=document.createElement('span');key.className='swarm-popup-label';key.textContent=label;
+    const val=document.createElement('span');val.className='swarm-popup-value'+(traffic?' swarm-popup-traffic':'');
+    val.textContent=(value===undefined||value===null||value===''?'—':String(value));
+    line.append(key,val);box.append(line);
+   }};
+   section('Connection');
+   row('Application',p.process_name||'Unknown process');
+   row('PID',p.process_id||'—');
+   row('Protocol',p.protocol||'—');
+   row('Remote port',p.port||'—');
+   row('Local port',p.local_port||'—');
+   row('State',p.connection_state||'—');
+   section('Network');
+   row('ASN / provider',p.organization?(p.asn?'AS'+p.asn+' · ':'')+p.organization:(p.asn?'AS'+p.asn:'—'));
+   row('Country / region',[p.country,p.region].filter(Boolean).join(' / ')||'—');
+   row('City',p.city||'—');
+   row('Latitude / longitude',Number.isFinite(Number(p.latitude))&&Number.isFinite(Number(p.longitude))?Number(p.latitude).toFixed(4)+' / '+Number(p.longitude).toFixed(4):'—');
+   section('Traffic');
+   if(Number(p.traffic_known)){{
+    row('Sent',bytes(p.traffic_upload_bytes),true);
+    row('Received',bytes(p.traffic_download_bytes),true);
+    row('Upload speed',rate(p.traffic_upload_bps),true);
+    row('Download speed',rate(p.traffic_download_bps),true);
+    row('Tracked flows',p.traffic_flow_count||0);
+   }}else{{
+    row('Traffic counters','Not available');
+    row('Enable','Application traffic statistics in settings');
+   }}
+   new maplibregl.Popup({{closeButton:true,closeOnClick:true,offset:12,maxWidth:'350px'}})
+    .setLngLat(event.lngLat).setDOMContent(box).addTo(map);
   }});
   window.swarmAtlasMapReady=true;status.style.display='none';
   if(window.pendingSwarmFeatures)window.setSwarmEndpoints(window.pendingSwarmFeatures);
@@ -532,8 +605,13 @@ window.maplibregl=maplibregl;
  }});
  window.setSwarmEndpoints=function(features){{
   window.pendingSwarmFeatures=features||[];
-  const source=map.getSource('swarm-endpoints');
-  if(source)source.setData({{type:'FeatureCollection',features:window.pendingSwarmFeatures}});
+  if(window.swarmAtlasMapUpdatePending)return;
+  window.swarmAtlasMapUpdatePending=true;
+  window.requestAnimationFrame(function(){{
+   window.swarmAtlasMapUpdatePending=false;
+   const source=map.getSource('swarm-endpoints');
+   if(source)source.setData({{type:'FeatureCollection',features:window.pendingSwarmFeatures}});
+  }});
  }};
 }})();
 </script></body></html>"""
@@ -573,12 +651,44 @@ window.maplibregl=maplibregl;
                 str(item.get("region") or ""),
                 str(item.get("country") or ""),
             )
+            process_id = int(item.get("process_id") or 0)
+            process_name = str(item.get("process_name") or "")
+            upload_bytes = max(0, int(item.get("traffic_upload_bytes") or 0))
+            download_bytes = max(0, int(item.get("traffic_download_bytes") or 0))
+            upload_bps = max(0.0, float(item.get("traffic_upload_bps") or 0))
+            download_bps = max(0.0, float(item.get("traffic_download_bps") or 0))
+            traffic_flow_count = int(item.get("traffic_flow_count") or 0)
+            properties = {
+                "ip":ip, "city":city, "region":region, "country":country,
+                "process_id":process_id, "process_name":process_name,
+                "protocol":str(item.get("protocol") or ""),
+                "port":int(item.get("port") or 0),
+                "local_port":int(item.get("local_port") or 0),
+                "connection_state":str(item.get("connection_state") or ""),
+                "asn":int(item.get("asn") or 0),
+                "organization":str(item.get("organization") or item.get("isp") or ""),
+                "latitude":lat, "longitude":lon,
+                "traffic_upload_bytes":upload_bytes,
+                "traffic_download_bytes":download_bytes,
+                "traffic_upload_bps":upload_bps,
+                "traffic_download_bps":download_bps,
+                "traffic_bps":upload_bps + download_bps,
+                "traffic_flow_count":traffic_flow_count,
+                "traffic_known":1 if traffic_flow_count > 0 else 0,
+            }
             valid.append(item)
-            signature.append((ip, round(lat, 6), round(lon, 6), city, region, country))
+            signature.append((
+                ip, round(lat, 6), round(lon, 6), city, region, country,
+                process_id, process_name, properties["protocol"], properties["port"],
+                properties["local_port"], properties["connection_state"],
+                properties["asn"], properties["organization"],
+                upload_bytes, download_bytes, round(upload_bps, 1), round(download_bps, 1),
+                traffic_flow_count,
+            ))
             features.append({
                 "type":"Feature",
                 "geometry":{"type":"Point","coordinates":[lon,lat]},
-                "properties":{"ip":ip,"city":city,"region":region,"country":country},
+                "properties":properties,
             })
         self._location_source = locations
         if tuple(signature) == self._location_signature:
