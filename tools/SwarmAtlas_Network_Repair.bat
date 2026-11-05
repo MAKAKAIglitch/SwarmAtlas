@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 title SwarmAtlas - Network Repair
 
@@ -126,7 +126,7 @@ if "%MODE%"=="2" (
     echo VPN clients, endpoint security software and other network tools may
     echo need repair afterwards. A Windows restart may be required.
     set /p "WINSOCK_CONFIRM=Type RESET to also reset Winsock, or press Enter to skip: "
-    if /i "%WINSOCK_CONFIRM%"=="RESET" (
+    if /i "!WINSOCK_CONFIRM!"=="RESET" (
         echo [4/4] Resetting Winsock catalog...
         echo Winsock reset confirmed.>>"%LOG_FILE%"
         netsh winsock reset >>"%LOG_FILE%" 2>&1
