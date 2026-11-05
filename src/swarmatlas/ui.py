@@ -453,20 +453,25 @@ html,body,#map {{width:100%;height:100%;margin:0;padding:0;overflow:hidden;backg
 </style>
 </head><body>
 <div id="map"></div><div id="map-status"></div>
+<script>
+window.showMapError=function(message){{
+ const status=document.getElementById('map-status');
+ status.textContent=message;status.style.display='block';
+}};
+window.setTimeout(function(){{
+ if(!window.swarmAtlasMapReady)window.showMapError('Map is taking too long to load. Check the connection to OpenFreeMap.');
+}},15000);
+</script>
 <script type="module">
 import * as maplibregl from 'https://unpkg.com/maplibre-gl@{cls.MAPLIBRE_VERSION}/dist/maplibre-gl.mjs';
 window.maplibregl=maplibregl;
 (function() {{
  const status=document.getElementById('map-status');
- window.setTimeout(function() {{
-  if(!window.swarmAtlasMapReady) window.showMapError('Map is taking too long to load. Check the connection to OpenFreeMap.');
- }},15000);
- window.showMapError=function(message){{status.textContent=message;status.style.display='block';}};
  if(!window.maplibregl){{window.showMapError('Map renderer unavailable. Check access to unpkg.com.');return;}}
  const map=new maplibregl.Map({{
   container:'map',style:'{cls.MAP_STYLE_URL}',center:[0,18],zoom:1.15,
   minZoom:1,maxZoom:12,maxPitch:0,pitchWithRotate:false,dragRotate:false,
-  touchPitch:false,renderWorldCopies:true,attributionControl:false,cooperativeGestures:true
+  touchPitch:false,renderWorldCopies:true,attributionControl:false
  }});
  window.swarmAtlasMap=map;
  map.addControl(new maplibregl.NavigationControl({{showCompass:false,visualizePitch:false}}),'top-right');
