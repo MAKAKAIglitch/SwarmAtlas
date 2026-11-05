@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn ipv4_echo_checksum_is_valid() {
         let packet = [8, 0, 0, 0, 0, 1, 0, 1, b'a', b'b'];
-        assert_eq!(checksum(&packet), 0x9c9b);
+        assert_eq!(checksum(&packet), 0x969b);
     }
 
     #[test]
