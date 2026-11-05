@@ -302,9 +302,9 @@ fn udp_probe(target: SocketAddr, ttl: u32, timeout: Duration) -> Result<TracePro
     )?;
     set_hop_limit(&sender, target, ttl)?;
     let local = if target.is_ipv4() {
-        SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 0)
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
     } else {
-        SocketAddr::new(IpAddr::from([0u16; 8]), 0)
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
     };
     sender.bind(&SockAddr::from(local))?;
     let port = UDP_BASE_PORT.saturating_add((ttl - 1).min(1000) as u16);
