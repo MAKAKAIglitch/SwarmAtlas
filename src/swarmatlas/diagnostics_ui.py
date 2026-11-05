@@ -308,7 +308,7 @@ class DiagnosticsDialog(QDialog):
         if not line.strip():
             return
         if "reply from" in line.casefold() or "ответ от" in line.casefold():
-            self._ping_sent = max(self._ping_sent, len(self._ping_samples) + 1)
+            self._ping_sent += 1
             rtt = parse_ping_rtt(line)
             if rtt is not None:
                 self._ping_samples.append(rtt)
@@ -350,7 +350,10 @@ class DiagnosticsDialog(QDialog):
         if self._ping_process is None:
             return
         self.ping_status.setText(self.t("diagnostics_process_error"))
+        process = self._ping_process
         self._ping_process = None
+        if process is not None:
+            process.deleteLater()
         self._set_ping_idle()
 
     def _set_ping_idle(self) -> None:
@@ -455,7 +458,10 @@ class DiagnosticsDialog(QDialog):
     def _trace_error(self, _error: QProcess.ProcessError) -> None:
         if self._trace_process is None:
             return
+        process = self._trace_process
         self._trace_process = None
+        if process is not None:
+            process.deleteLater()
         self.trace_start_button.setEnabled(True)
         self.trace_stop_button.setEnabled(False)
         self.trace_status.setText(self.t("diagnostics_process_error"))
