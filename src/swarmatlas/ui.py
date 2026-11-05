@@ -1255,7 +1255,7 @@ class MainWindow(QMainWindow):
         side.addSpacing(24)
 
         self.nav_buttons: list[QPushButton] = []
-        self.nav_keys = ("overview", "destinations", "history")
+        self.nav_keys = ("overview", "destinations", "history", "applications")
         for key in self.nav_keys:
             button = QPushButton(self.t(key))
             button.setObjectName("nav")
@@ -1513,6 +1513,7 @@ class MainWindow(QMainWindow):
         self.app_table.setMinimumHeight(170)
         app_layout.addWidget(self.app_table)
         content_layout.addWidget(app_card)
+        self.app_card = app_card
 
         self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
         content_layout.addWidget(self.data_note)
@@ -1590,6 +1591,8 @@ class MainWindow(QMainWindow):
             self.scroll_area.scroll_to_widget(self.chart_card, 20)
         elif key == "destinations":
             self.scroll_area.scroll_to_widget(self.peers_card, 20)
+        elif key == "applications":
+            self.scroll_area.scroll_to_widget(self.app_card, 20)
         else:
             self.scroll_area.scroll_to_value(0)
 
