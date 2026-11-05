@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 from typing import Any, Sequence
 
 
@@ -16,6 +17,7 @@ NATIVE_MAP_GEOMETRY = False
 NATIVE_INTERFACE_COUNTERS = False
 NATIVE_PROCESS_NAMES = False
 NATIVE_TCP_FLOW_STATS = False
+NATIVE_TRACEROUTE = False
 
 try:
     import _swarmatlas_native as candidate
@@ -46,6 +48,10 @@ try:
     NATIVE_TCP_FLOW_STATS = "tcp-flow-estats-v1" in capabilities and callable(
         getattr(candidate, "collect_tcp_flow_stats", None)
     )
+    traceroute_capabilities = {"traceroute-icmp-v1", "traceroute-udp-v1", "traceroute-tcp-v1"}
+    NATIVE_TRACEROUTE = traceroute_capabilities.issubset(capabilities) and callable(
+        getattr(candidate, "traceroute_probe", None)
+    )
 except Exception as exc:
     # An incompatible or partially installed extension must never prevent the
     # Python collector and the rest of the desktop application from starting.
@@ -58,6 +64,7 @@ except Exception as exc:
     NATIVE_INTERFACE_COUNTERS = False
     NATIVE_PROCESS_NAMES = False
     NATIVE_TCP_FLOW_STATS = False
+    NATIVE_TRACEROUTE = False
 
 
 def backend_status() -> str:
@@ -275,3 +282,43 @@ def list_udp_bindings(limit: int = NATIVE_UDP_SCAN_LIMIT) -> list[dict[str, Any]
             "process_id": process_id or None,
         })
     return result
+
+
+def traceroute_probe(
+    target: str,
+    method: str,
+    ttl: int,
+    timeout_ms: int = 1000,
+    port: int = 443,
+) -> dict[str, Any]:
+    """Perform one bounded Rust traceroute probe for a single hop."""
+    if not NATIVE_TRACEROUTE or _native is None:
+        raise RuntimeError("The Rust ICMP/UDP/TCP traceroute capability is not installed")
+    method = str(method).strip().lower()
+    if method not in {"icmp", "udp", "tcp"}:
+        raise ValueError("method must be icmp, udp, or tcp")
+    ttl = int(ttl)
+    timeout_ms = int(timeout_ms)
+    port = int(port)
+    if not 1 <= ttl <= 64:
+        raise ValueError("ttl must be between 1 and 64")
+    if not 100 <= timeout_ms <= 10_000:
+        raise ValueError("timeout_ms must be between 100 and 10000")
+    if not 1 <= port <= 65535:
+        raise ValueError("port must be between 1 and 65535")
+    row = _native.traceroute_probe(str(target), method, ttl, timeout_ms, port)
+    if not isinstance(row, (tuple, list)) or len(row) != 4:
+        raise RuntimeError("The Rust traceroute backend returned an invalid probe result")
+    address, rtt, reached, status = row
+    try:
+        parsed_rtt = None if rtt is None else float(rtt)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError("The Rust traceroute backend returned an invalid RTT") from exc
+    if parsed_rtt is not None and (parsed_rtt < 0 or not math.isfinite(parsed_rtt)):
+        raise RuntimeError("The Rust traceroute backend returned an invalid RTT")
+    return {
+        "address": str(address) if address else None,
+        "rtt": parsed_rtt,
+        "reached": bool(reached),
+        "status": str(status),
+    }
