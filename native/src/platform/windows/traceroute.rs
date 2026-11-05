@@ -244,12 +244,23 @@ fn receive_reply(
     target: SocketAddr,
     timeout: Duration,
 ) -> Result<(Option<String>, Option<f64>, bool, String)> {
-    let start = Instant::now();
+    let started = Instant::now();
+    receive_reply_since(receiver, target, timeout, timeout, started)
+}
+
+fn receive_reply_since(
+    receiver: &Socket,
+    target: SocketAddr,
+    wait_timeout: Duration,
+    rtt_timeout: Duration,
+    rtt_started: Instant,
+) -> Result<(Option<String>, Option<f64>, bool, String)> {
+    let wait_started = Instant::now();
     let ipv6 = target.is_ipv6();
     let mut buffer = vec![std::mem::MaybeUninit::<u8>::uninit(); 2048];
 
     loop {
-        let remaining = timeout.saturating_sub(start.elapsed());
+        let remaining = wait_timeout.saturating_sub(wait_started.elapsed());
         if remaining.is_zero() {
             return Ok((None, None, false, "timeout".to_owned()));
         }
@@ -267,7 +278,7 @@ fn receive_reply(
                     continue;
                 }
                 let reached = is_destination_reply(bytes, ipv6, source.ip(), target.ip());
-                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                let elapsed = rtt_started.elapsed().as_secs_f64() * 1000.0;
                 return Ok((
                     Some(source.ip().to_string()),
                     Some(elapsed),
@@ -346,7 +357,13 @@ fn tcp_probe(target: SocketAddr, ttl: u32, timeout: Duration, port: u16) -> Resu
         ));
     }
 
-    match receive_reply(&receiver, target, Duration::from_millis(100)) {
+    match receive_reply_since(
+        &receiver,
+        target,
+        Duration::from_millis(100),
+        timeout,
+        started,
+    ) {
         Ok((Some(address), rtt, reached, status)) => Ok((Some(address), rtt, reached, status)),
         Ok((None, _, _, _)) => Ok((None, None, false, "timeout".to_owned())),
         Err(error) => Err(error),
