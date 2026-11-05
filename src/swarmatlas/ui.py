@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
+import re
 from pathlib import Path
 import math
 import shutil
@@ -9,7 +11,7 @@ import sqlite3
 import time
 from typing import Any
 
-from PySide6.QtCore import QAbstractAnimation, QEvent, QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
+from PySide6.QtCore import QAbstractAnimation, QEvent, QEasingCurve, QProcess, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot, QObject
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
     QTableWidgetItem, QToolTip, QVBoxLayout, QWidget, QLineEdit,
 )
+from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -443,6 +446,56 @@ class TrafficChart(QWidget):
         draw_series(self.upload, colors["accent"])
 
 
+class EndpointPingBridge(QObject):
+    """Run one bounded ICMP echo only when an endpoint popup is opened."""
+    pingResult = Signal(str, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._processes: dict[int, tuple[QProcess, str]] = {}
+
+    @Slot(str)
+    def ping(self, address: str) -> None:
+        try:
+            normalized = str(ipaddress.ip_address(address))
+        except ValueError:
+            self.pingResult.emit(str(address), "Некорректный IP-адрес")
+            return
+        process = QProcess(self)
+        process.setProgram("ping")
+        process.setArguments(["-n", "1", "-w", "1200", normalized])
+        key = id(process)
+        self._processes[key] = (process, normalized)
+        process.finished.connect(lambda _code, _status, process_key=key: self._finish(process_key))
+        process.errorOccurred.connect(lambda _error, process_key=key: self._finish(process_key, failed=True))
+        process.start()
+
+    def _finish(self, key: int, failed: bool = False) -> None:
+        entry = self._processes.pop(key, None)
+        if entry is None:
+            return
+        process, address = entry
+        output = bytes(process.readAllStandardOutput()).decode("utf-8", errors="replace")
+        output += bytes(process.readAllStandardError()).decode("utf-8", errors="replace")
+        if failed:
+            result = "Не удалось запустить ping"
+        else:
+            match = re.search(
+                r"(?:time|время)[=<]\s*([\d.,]+)\s*(?:ms|мс)",
+                output,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                value = match.group(1).replace(",", ".")
+                result = "<1 мс" if "<" in output[match.start():match.end()] else f"{value} мс"
+            elif process.exitCode() == 0:
+                result = "Ответ получен"
+            else:
+                result = "Нет ответа (тайм-аут или фильтрация ICMP)"
+        process.deleteLater()
+        self.pingResult.emit(address, result)
+
+
 class WorldMap(QWidget):
     """Responsive MapLibre map using OpenFreeMap's dark vector style."""
 
@@ -471,12 +524,14 @@ class WorldMap(QWidget):
     }
     _profile_configured = False
 
-    def __init__(self, palette: dict[str, str], empty_text: str, cache_namespace: str = "main"):
+    def __init__(self, palette: dict[str, str], empty_text: str, cache_namespace: str = "main", language: str = "en"):
         super().__init__()
         del cache_namespace
         self.setMinimumHeight(300)
         self.palette_colors = palette
         self.empty_text = empty_text
+        self.language = language
+        self.requirement_text = tr("tcp_estats_requirement", language)
         self.locations: list[dict[str, Any]] = []
         self._location_source: list[dict[str, Any]] | None = None
         self._location_signature: tuple[tuple[Any, ...], ...] | None = None
@@ -500,11 +555,16 @@ class WorldMap(QWidget):
             QWebEngineSettings.WebAttribute.JavascriptEnabled, True
         )
         self.web_view.loadFinished.connect(self._on_page_loaded)
+        self._ping_bridge = EndpointPingBridge(self)
+        self._web_channel = QWebChannel(self.web_view.page())
+        self._web_channel.registerObject("pingBridge", self._ping_bridge)
+        self.web_view.page().setWebChannel(self._web_channel)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.web_view, 1)
-        self.web_view.setHtml(self._map_html(), QUrl("https://swarmatlas.invalid/"))
+        html = self._map_html().replace("__ESTATS_REQUIREMENT__", json.dumps(self.requirement_text, ensure_ascii=False))
+        self.web_view.setHtml(html, QUrl("https://swarmatlas.invalid/"))
 
     @classmethod
     def _map_html(cls) -> str:
@@ -512,6 +572,7 @@ class WorldMap(QWidget):
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@{cls.MAPLIBRE_VERSION}/dist/maplibre-gl.css">
 <style>
 html,body,#map {{width:100%;height:100%;margin:0;padding:0;overflow:hidden;background:#08111f}}
@@ -549,6 +610,16 @@ html,body,#map {{width:100%;height:100%;margin:0;padding:0;overflow:hidden;backg
 <script>
 window.showMapError=function(message){{
  const status=document.getElementById('map-status');
+ if(window.qt&&qt.webChannelTransport){{
+  new QWebChannel(qt.webChannelTransport,function(channel){{
+   window.swarmAtlasPingBridge=channel.objects.pingBridge;
+   window.swarmAtlasPingBridge.pingResult.connect(function(ip,result){{
+    document.querySelectorAll('[data-ping-ip]').forEach(function(el){{
+     if(el.getAttribute('data-ping-ip')===ip)el.textContent=result;
+    }});
+   }});
+  }});
+ }}
  status.textContent=message;status.style.display='block';
 }};
 window.setTimeout(function(){{
@@ -601,14 +672,15 @@ window.maplibregl=maplibregl;
    id:'endpoint-cluster-glow',type:'circle',source:'swarm-endpoints',
    filter:['has','point_count'],
    paint:{{
-    'circle-radius':['interpolate',['linear'],['get','traffic_bps'],
-      0,16,1024,21,16384,29,262144,38,4194304,48],
+    'circle-radius':['+',
+      ['step',['get','point_count'],13,25,17,100,21],
+      ['interpolate',['exponential',0.35],['get','traffic_bps'],0,0,1,1,64,3,1024,7,16384,12,262144,18,4194304,24]],
     'circle-color':['case',
       ['>', ['get','traffic_upload_bps'], ['*', ['get','traffic_download_bps'], 1.35]], '#ff9854',
       ['>', ['get','traffic_download_bps'], ['*', ['get','traffic_upload_bps'], 1.35]], '#35c8ff',
       ['>', ['get','traffic_bps'], 0], '#a78bfa',
       '#60758d'],
-    'circle-opacity':['case',['>', ['get','traffic_bps'],0],0.55,0.18],
+    'circle-opacity':['case',['>', ['get','traffic_bps'],0],0.78,0.22],
     'circle-blur':0.78
    }}
   }});
@@ -621,7 +693,9 @@ window.maplibregl=maplibregl;
       ['>', ['get','traffic_download_bps'], ['*', ['get','traffic_upload_bps'], 1.35]], '#35c8ff',
       ['>', ['get','traffic_bps'], 0], '#a78bfa',
       '#2563eb'],
-    'circle-radius':['step',['get','point_count'],14,25,19,100,24],
+    'circle-radius':['+',
+      ['step',['get','point_count'],12,25,16,100,20],
+      ['interpolate',['exponential',0.35],['get','traffic_bps'],0,0,1,0.8,64,2,1024,4,16384,7,262144,10,4194304,13]],
     'circle-stroke-color':'#071321','circle-stroke-width':1.5
    }}
   }});
@@ -782,8 +856,15 @@ window.maplibregl=maplibregl;
     row('Tracked flows',p.traffic_flow_count||0);
    }}else{{
     row('Traffic counters','Not collected');
-    row('Requirement','Windows TCP ESTATS support and access rights');
+    row('Requirement',__ESTATS_REQUIREMENT__);
    }}
+   const pingSection=document.createElement('div');pingSection.className='swarm-popup-section';pingSection.textContent='Ping';box.append(pingSection);
+   const pingLine=document.createElement('div');pingLine.className='swarm-popup-row';
+   const pingLabel=document.createElement('span');pingLabel.className='swarm-popup-label';pingLabel.textContent='Задержка';
+   const pingValue=document.createElement('span');pingValue.className='swarm-popup-value';pingValue.textContent='Проверка…';pingValue.setAttribute('data-ping-ip',p.ip||'');
+   pingLine.append(pingLabel,pingValue);box.append(pingLine);
+   if(window.swarmAtlasPingBridge&&p.ip)window.swarmAtlasPingBridge.ping(p.ip);
+   else pingValue.textContent='Проверка недоступна';
    new maplibregl.Popup({{closeButton:true,closeOnClick:true,offset:12,maxWidth:'350px'}})
     .setLngLat(event.lngLat).setDOMContent(box).addTo(map);
   }});
@@ -896,9 +977,9 @@ window.maplibregl=maplibregl;
                 "organization":organization, "latitude":lat, "longitude":lon,
                 "company_name":company_name, "company_slug":company_slug,
                 "company_icon":company_icon, "company_color":company_color,
-                "traffic_upload_bps":round(upload_bps / 64.0) * 64.0,
-                "traffic_download_bps":round(download_bps / 64.0) * 64.0,
-                "traffic_bps":round((upload_bps + download_bps) / 64.0) * 64.0,
+                "traffic_upload_bps":upload_bps,
+                "traffic_download_bps":download_bps,
+                "traffic_bps":upload_bps + download_bps,
                 "traffic_flow_count":flow_count,
                 "traffic_known":1 if flow_count > 0 else 0,
             }
@@ -924,7 +1005,7 @@ window.maplibregl=maplibregl;
             map_signature.append((
                 endpoint_id, round(lat, 6), round(lon, 6), city, region, country,
                 process_name, connection_state, asn, organization, company_icon,
-                round(upload_bps / 64.0), round(download_bps / 64.0), flow_count,
+                round(upload_bps, 1), round(download_bps, 1), flow_count,
             ))
             features.append({
                 "type":"Feature",
@@ -1013,6 +1094,7 @@ class WorldMapDialog(QDialog):
             palette,
             source_map.empty_text,
             cache_namespace="expanded",
+            language=language,
         )
         self.map_widget.copy_boundaries_from(source_map)
         self.map_widget.set_locations(source_map.locations)
@@ -1291,7 +1373,7 @@ class MainWindow(QMainWindow):
         self.map_expand_button.clicked.connect(self.open_map_dialog)
         map_heading.addWidget(self.map_expand_button)
         map_layout.addLayout(map_heading)
-        self.world_map = WorldMap(self.palette, self.t("map_empty"))
+        self.world_map = WorldMap(self.palette, self.t("map_empty"), language=self.current_language)
         map_layout.addWidget(self.world_map)
         self.map_attribution_label = QLabel(self._map_attribution_html())
         self.map_attribution_label.setTextFormat(Qt.TextFormat.RichText)
