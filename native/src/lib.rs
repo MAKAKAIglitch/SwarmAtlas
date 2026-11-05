@@ -12,6 +12,7 @@ use platform::{
     list_tcp_connections as read_tcp_connections,
     list_udp_bindings as read_udp_bindings,
     resolve_process_names as read_process_names,
+    traceroute_probe as read_traceroute_probe,
 };
 
 #[pyfunction]
@@ -96,6 +97,38 @@ fn project_and_simplify_rings(
     }))
 }
 
+
+/// Perform one TTL-limited native traceroute probe (ICMP, UDP, or TCP).
+#[pyfunction]
+#[pyo3(signature = (target, method, ttl, timeout_ms=1000, port=443))]
+fn traceroute_probe(
+    py: Python<'_>,
+    target: String,
+    method: String,
+    ttl: u32,
+    timeout_ms: u64,
+    port: u16,
+) -> PyResult<platform::TraceProbe> {
+    if target.trim().is_empty() || target.len() > 253 {
+        return Err(PyValueError::new_err("target must be a hostname or IP address"));
+    }
+    if !(1..=64).contains(&ttl) {
+        return Err(PyValueError::new_err("ttl must be between 1 and 64"));
+    }
+    if !(100..=10_000).contains(&timeout_ms) {
+        return Err(PyValueError::new_err("timeout_ms must be between 100 and 10000"));
+    }
+    if port == 0 {
+        return Err(PyValueError::new_err("port must be between 1 and 65535"));
+    }
+    let method = method.to_ascii_lowercase();
+    if !matches!(method.as_str(), "icmp" | "udp" | "tcp") {
+        return Err(PyValueError::new_err("method must be icmp, udp, or tcp"));
+    }
+    py.detach(move || read_traceroute_probe(&target, &method, ttl, timeout_ms, port))
+        .map_err(PyRuntimeError::new_err)
+}
+
 #[pyfunction]
 fn capabilities() -> Vec<&'static str> {
     vec![
@@ -108,6 +141,9 @@ fn capabilities() -> Vec<&'static str> {
         "network-interfaces-v1",
         "process-names-v1",
         "tcp-flow-estats-v1",
+        "traceroute-icmp-v1",
+        "traceroute-udp-v1",
+        "traceroute-tcp-v1",
         "ipv4",
         "ipv6",
         "read-only",
@@ -122,6 +158,7 @@ fn _swarmatlas_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(collect_tcp_flow_stats, module)?)?;
     module.add_function(wrap_pyfunction!(list_network_interfaces, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_process_names, module)?)?;
+    module.add_function(wrap_pyfunction!(traceroute_probe, module)?)?;
     module.add_function(wrap_pyfunction!(project_and_simplify_rings, module)?)?;
     module.add_function(wrap_pyfunction!(capabilities, module)?)?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
