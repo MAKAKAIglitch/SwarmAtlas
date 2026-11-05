@@ -454,9 +454,9 @@ class WorldMap(QWidget):
     COMPANY_NETWORKS = {
         15169: ("Google", "google", "#4285F4"),
         396982: ("Google Cloud", "googlecloud", "#4285F4"),
-        8075: ("Microsoft", "microsoft", "#00A4EF"),
-        16509: ("Amazon Web Services", "amazonaws", "#FF9900"),
-        14618: ("Amazon", "amazonaws", "#FF9900"),
+        8075: ("Microsoft", "", "#00A4EF"),
+        16509: ("Amazon Web Services", "", "#FF9900"),
+        14618: ("Amazon", "", "#FF9900"),
         13335: ("Cloudflare", "cloudflare", "#F38020"),
         32934: ("Meta", "meta", "#0866FF"),
         714: ("Apple", "apple", "#A2AAAD"),
@@ -466,8 +466,8 @@ class WorldMap(QWidget):
         14061: ("DigitalOcean", "digitalocean", "#0080FF"),
         16276: ("OVHcloud", "ovh", "#123F6D"),
         24940: ("Hetzner", "hetzner", "#D50C2D"),
-        31898: ("Oracle Cloud", "oracle", "#F80000"),
-        36351: ("IBM", "ibm", "#1261FE"),
+        31898: ("Oracle Cloud", "", "#F80000"),
+        36351: ("IBM", "", "#1261FE"),
     }
     _profile_configured = False
 
@@ -666,12 +666,20 @@ window.maplibregl=maplibregl;
    const companies=new Map();
    (features||[]).forEach(function(feature){{
     const p=feature.properties||{{}};
-    if(p.company_icon&&p.company_slug&&p.company_color&&!map.hasImage(p.company_icon))
-     companies.set(p.company_icon,{{slug:p.company_slug,color:p.company_color}});
+    if(p.company_icon&&p.company_color&&!map.hasImage(p.company_icon))
+     companies.set(p.company_icon,{{slug:p.company_slug||'',color:p.company_color,name:p.company_name||'Network'}});
    }});
    companies.forEach(function(meta,id){{
     if(companyIconLoads.has(id))return;
     companyIconLoads.add(id);
+    const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
+    const context=canvas.getContext('2d');
+    context.beginPath();context.arc(32,32,31,0,Math.PI*2);context.fillStyle=meta.color;context.fill();
+    context.fillStyle='#ffffff';context.textAlign='center';context.textBaseline='middle';
+    context.font='bold '+(meta.name.length>3?'21px':'25px')+' Segoe UI,sans-serif';
+    context.fillText(meta.name.length>3?meta.name.slice(0,1).toUpperCase():meta.name.toUpperCase(),32,33);
+    map.addImage(id,context.getImageData(0,0,64,64),{{pixelRatio:2}});
+    if(!meta.slug)return;
     const url='https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/'+encodeURIComponent(meta.slug)+'.svg';
     fetch(url,{{mode:'cors',cache:'force-cache'}})
      .then(function(response){{if(!response.ok)throw new Error('Icon not found');return response.text();}})
@@ -683,11 +691,11 @@ window.maplibregl=maplibregl;
       const image=new Image();
       image.onload=function(){{
        try{{
-        const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
-        const context=canvas.getContext('2d');
-        context.beginPath();context.arc(32,32,31,0,Math.PI*2);context.fillStyle=meta.color;context.fill();
-        context.drawImage(image,15,15,34,34);
-        if(!map.hasImage(id))map.addImage(id,context.getImageData(0,0,64,64),{{pixelRatio:2}});
+        const logoCanvas=document.createElement('canvas');logoCanvas.width=64;logoCanvas.height=64;
+        const logoContext=logoCanvas.getContext('2d');
+        logoContext.beginPath();logoContext.arc(32,32,31,0,Math.PI*2);logoContext.fillStyle=meta.color;logoContext.fill();
+        logoContext.drawImage(image,15,15,34,34);
+        map.updateImage(id,logoContext.getImageData(0,0,64,64));
         map.triggerRepaint();
        }}catch(error){{console.debug('Company icon render skipped',id,error);}}
        URL.revokeObjectURL(blobUrl);
@@ -695,8 +703,7 @@ window.maplibregl=maplibregl;
       image.onerror=function(){{URL.revokeObjectURL(blobUrl);}};
       image.src=blobUrl;
      }})
-     .catch(function(error){{console.debug('Company icon unavailable',id,error);}})
-     .finally(function(){{companyIconLoads.delete(id);}});
+     .catch(function(error){{console.debug('Company logo unavailable; keeping initials',id,error);}});
    }});
   }};
   map.addLayer({{
@@ -873,7 +880,7 @@ window.maplibregl=maplibregl;
             organization = str(item.get("organization") or item.get("isp") or "")
             company = self._company_for_network(asn, organization)
             company_name, company_slug, company_color = company if company else ("", "", "")
-            company_icon = f"company-{company_slug}" if company_slug else ""
+            company_icon = f"company-as{asn}" if company else ""
             upload_bytes = max(0, int(item.get("traffic_upload_bytes") or 0))
             download_bytes = max(0, int(item.get("traffic_download_bytes") or 0))
             upload_bps = max(0.0, float(item.get("traffic_upload_bps") or 0))
