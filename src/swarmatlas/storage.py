@@ -603,6 +603,24 @@ class Store:
                 LIMIT 50
                 """
             ).fetchall()
+            top_applications = self._db.execute(
+                """
+                SELECT
+                    f.process_id,
+                    COALESCE(MAX(d.process_name), '') AS process_name,
+                    SUM(f.upload_bytes) AS upload_bytes,
+                    SUM(f.download_bytes) AS download_bytes,
+                    COUNT(DISTINCT f.ip) AS peer_count,
+                    MAX(f.last_seen) AS last_seen
+                FROM traffic_flows AS f
+                LEFT JOIN destinations AS d
+                  ON d.ip = f.ip AND d.port = f.port
+                 AND d.protocol = f.protocol AND d.process_id = f.process_id
+                GROUP BY f.process_id
+                ORDER BY (SUM(f.upload_bytes) + SUM(f.download_bytes)) DESC
+                LIMIT 100
+                """
+            ).fetchall()
             top_companies = self._db.execute(
                 """
                 SELECT
@@ -627,6 +645,7 @@ class Store:
             "countries": [dict(row) for row in countries],
             "regions": [dict(row) for row in regions],
             "top_destinations": [dict(row) for row in top_destinations],
+            "top_applications": [dict(row) for row in top_applications],
             "top_companies": [dict(row) for row in top_companies],
         }
 
