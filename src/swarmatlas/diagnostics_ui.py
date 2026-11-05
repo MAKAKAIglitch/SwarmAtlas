@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import socket
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from .i18n import tr
+from .native import NATIVE_TRACEROUTE, traceroute_probe as native_traceroute_probe
 
 
 _RTT_RE = re.compile(r"(?:time|время)\s*[=<]\s*([\d.,]+)\s*(?:ms|мс)", re.IGNORECASE)
@@ -125,6 +127,67 @@ class _ReverseDnsThread(QThread):
         self.resolved.emit(self.address, hostname)
 
 
+class _TracerouteWorker(QThread):
+    hop_ready = Signal(int, str, list, bool, str)
+    completed = Signal(bool)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        target: str,
+        method: str,
+        max_hops: int,
+        timeout_ms: int,
+        probes: int,
+        port: int,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.target = target
+        self.method = method
+        self.max_hops = max_hops
+        self.timeout_ms = timeout_ms
+        self.probes = probes
+        self.port = port
+        self._cancelled = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    def run(self) -> None:
+        try:
+            for ttl in range(1, self.max_hops + 1):
+                if self._cancelled.is_set():
+                    break
+                address = ""
+                rtts: list[float] = []
+                reached = False
+                status = "timeout"
+                for _ in range(self.probes):
+                    if self._cancelled.is_set():
+                        break
+                    result = native_traceroute_probe(
+                        self.target, self.method, ttl, self.timeout_ms, self.port
+                    )
+                    if result["address"] and not address:
+                        address = result["address"]
+                    if result["rtt"] is not None:
+                        rtts.append(result["rtt"])
+                    if result["reached"]:
+                        reached = True
+                        status = "destination"
+                        break
+                    status = result["status"]
+                if self._cancelled.is_set():
+                    break
+                self.hop_ready.emit(ttl, address, rtts, reached, status)
+                if reached:
+                    break
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        self.completed.emit(self._cancelled.is_set())
+
+
 class DiagnosticsDialog(QDialog):
     """Cancellable Windows ping and ICMP traceroute tools."""
 
@@ -133,6 +196,7 @@ class DiagnosticsDialog(QDialog):
         self.language = language
         self._ping_process: QProcess | None = None
         self._trace_process: QProcess | None = None
+        self._trace_worker: _TracerouteWorker | None = None
         self._ping_samples: list[float] = []
         self._ping_sent = 0
         self._ping_buffer = ""
@@ -200,11 +264,12 @@ class DiagnosticsDialog(QDialog):
         self.trace_method.addItem("ICMP", "icmp")
         self.trace_method.addItem("UDP", "udp")
         self.trace_method.addItem("TCP", "tcp")
-        for index in (1, 2):
-            item = self.trace_method.model().item(index)
-            if item is not None:
-                item.setEnabled(False)
-                item.setToolTip(self.t("diagnostics_method_unavailable"))
+        if not NATIVE_TRACEROUTE:
+            for index in (1, 2):
+                item = self.trace_method.model().item(index)
+                if item is not None:
+                    item.setEnabled(False)
+                    item.setToolTip(self.t("diagnostics_method_unavailable"))
         self.trace_hops = QSpinBox()
         self.trace_hops.setRange(1, 64)
         self.trace_hops.setValue(30)
@@ -212,11 +277,19 @@ class DiagnosticsDialog(QDialog):
         self.trace_timeout.setRange(250, 10000)
         self.trace_timeout.setSingleStep(250)
         self.trace_timeout.setValue(1000)
+        self.trace_probes = QSpinBox()
+        self.trace_probes.setRange(1, 3)
+        self.trace_probes.setValue(3)
+        self.trace_port = QSpinBox()
+        self.trace_port.setRange(1, 65535)
+        self.trace_port.setValue(443)
         trace_form.addRow(self.t("diagnostics_target"), self.trace_target)
         trace_form.addRow(self.t("diagnostics_family"), self.trace_family)
         trace_form.addRow(self.t("diagnostics_method"), self.trace_method)
         trace_form.addRow(self.t("diagnostics_max_hops"), self.trace_hops)
         trace_form.addRow(self.t("diagnostics_timeout"), self.trace_timeout)
+        trace_form.addRow(self.t("diagnostics_trace_probes"), self.trace_probes)
+        trace_form.addRow(self.t("diagnostics_trace_port"), self.trace_port)
         trace_layout.addLayout(trace_form)
         trace_actions = QHBoxLayout()
         self.trace_start_button = QPushButton(self.t("diagnostics_trace_start"))
@@ -369,12 +442,19 @@ class DiagnosticsDialog(QDialog):
         QTimer.singleShot(1200, lambda proc=process: proc.kill() if proc.state() != QProcess.ProcessState.NotRunning else None)
 
     def start_traceroute(self) -> None:
-        if self._trace_process is not None:
+        if self._trace_process is not None or self._trace_worker is not None:
             return
         try:
             target = self._target_and_family(self.trace_target, self.trace_family)
         except ValueError as exc:
             self.trace_status.setText(str(exc))
+            return
+        method = str(self.trace_method.currentData())
+        if NATIVE_TRACEROUTE:
+            self._start_native_traceroute(target, method)
+            return
+        if method != "icmp":
+            self.trace_status.setText(self.t("diagnostics_method_unavailable"))
             return
         args = ["-d", f"-{self.trace_family.currentData()}",
                 "-h", str(self.trace_hops.value()), "-w", str(self.trace_timeout.value()), target]
@@ -391,6 +471,73 @@ class DiagnosticsDialog(QDialog):
         self.trace_start_button.setEnabled(False)
         self.trace_stop_button.setEnabled(True)
         process.start()
+
+
+    def _start_native_traceroute(self, target: str, method: str) -> None:
+        self._trace_buffer = ""
+        self.trace_table.setRowCount(0)
+        self.trace_status.setText(
+            self.t("diagnostics_trace_native_running", target=target, method=method.upper())
+        )
+        self.trace_start_button.setEnabled(False)
+        self.trace_stop_button.setEnabled(True)
+        worker = _TracerouteWorker(
+            target,
+            method,
+            self.trace_hops.value(),
+            self.trace_timeout.value(),
+            self.trace_probes.value(),
+            self.trace_port.value(),
+            self,
+        )
+        worker.hop_ready.connect(self._add_native_trace_hop)
+        worker.completed.connect(self._native_trace_completed)
+        worker.failed.connect(self._native_trace_failed)
+        worker.finished.connect(self._native_trace_thread_finished)
+        self._trace_worker = worker
+        worker.start()
+
+    def _add_native_trace_hop(
+        self, hop: int, address: str, rtts: list, reached: bool, status: str
+    ) -> None:
+        row = self.trace_table.rowCount()
+        self.trace_table.insertRow(row)
+        rtt_text = " / ".join(f"{float(value):.2f} ms" for value in rtts) if rtts else "—"
+        if status == "timeout" and not address:
+            status_text = self.t("diagnostics_hop_timeout")
+        elif reached:
+            status_text = self.t("diagnostics_trace_destination")
+        else:
+            status_text = self.t("diagnostics_hop_replied")
+        values = [str(hop), address or "—", "—", rtt_text, status_text]
+        for column, value in enumerate(values):
+            self.trace_table.setItem(row, column, QTableWidgetItem(value))
+        if address:
+            worker = _ReverseDnsThread(address)
+            _DNS_THREADS.add(worker)
+            worker.resolved.connect(self._set_reverse_dns)
+            worker.finished.connect(lambda thread=worker: self._release_dns_thread(thread))
+            self._dns_threads.append(worker)
+            worker.start()
+
+    def _native_trace_completed(self, cancelled: bool) -> None:
+        if cancelled:
+            self.trace_status.setText(self.t("diagnostics_trace_cancelled"))
+        elif self.trace_table.rowCount():
+            self.trace_status.setText(self.t("diagnostics_trace_finished"))
+        else:
+            self.trace_status.setText(self.t("diagnostics_trace_no_hops"))
+
+    def _native_trace_failed(self, message: str) -> None:
+        self.trace_status.setText(f"{self.t('diagnostics_process_error')} {message}")
+
+    def _native_trace_thread_finished(self) -> None:
+        worker = self._trace_worker
+        self._trace_worker = None
+        self.trace_start_button.setEnabled(True)
+        self.trace_stop_button.setEnabled(False)
+        if worker is not None:
+            worker.deleteLater()
 
     def _read_trace_output(self) -> None:
         process = self._trace_process
@@ -467,6 +614,11 @@ class DiagnosticsDialog(QDialog):
         self.trace_status.setText(self.t("diagnostics_process_error"))
 
     def stop_traceroute(self) -> None:
+        if self._trace_worker is not None:
+            self._trace_worker.cancel()
+            self.trace_stop_button.setEnabled(False)
+            self.trace_status.setText(self.t("diagnostics_trace_stop_wait"))
+            return
         if self._trace_process is None:
             return
         process = self._trace_process
@@ -474,6 +626,9 @@ class DiagnosticsDialog(QDialog):
         QTimer.singleShot(1200, lambda proc=process: proc.kill() if proc.state() != QProcess.ProcessState.NotRunning else None)
 
     def closeEvent(self, event) -> None:
+        if self._trace_worker is not None:
+            self._trace_worker.cancel()
+            self._trace_worker.wait(12_000)
         for process in (self._ping_process, self._trace_process):
             if process is not None:
                 process.kill()
