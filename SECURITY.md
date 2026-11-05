@@ -65,7 +65,7 @@ Interface counters account for all bytes reported by the selected adapter. The W
 
 ## Future features
 
-Per-flow byte accounting and packet capture are not implemented. Before selecting a backend, evaluate its privilege requirements, whether it installs filters/drivers, whether it can affect packet processing, its CPU/memory overhead, and how it is removed. Any such feature must be a separate, disabled-by-default module with explicit user consent and a documented rollback path. The read-only interface-counter mode must remain available independently.
+Optional per-flow TCP byte accounting is implemented using Windows TCP ESTATS through the Rust backend. It is disabled by default and requires explicit user opt-in; Windows may require the application to run elevated for the OS to expose these counters. It records TCP payload-byte counters by connection and owning process, without packet payload capture, packet filters or drivers. It does not account for UDP or every TCP connection, and it must not be represented as complete per-application network usage. Adapter-wide interface counters remain independent and available without enabling this feature. Packet capture is not implemented.
 
 ## Reporting
 
