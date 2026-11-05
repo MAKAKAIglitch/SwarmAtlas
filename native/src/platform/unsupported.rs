@@ -37,6 +37,7 @@ pub(crate) fn traceroute_probe(
     _ttl: u32,
     _timeout_ms: u64,
     _port: u16,
+    _family: u8,
 ) -> Result<TraceProbe, String> {
     Err("Native ICMP/UDP/TCP traceroute currently supports Windows only".to_owned())
 }
