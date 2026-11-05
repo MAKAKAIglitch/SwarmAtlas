@@ -3,14 +3,54 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+from PySide6.QtCore import Signal
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from swarmatlas import config
 from swarmatlas.theme import get_palette
 from swarmatlas.ui import GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, TrafficChart, WorldMap
+
+
+class _FakeWebEngineSettings:
+    def setAttribute(self, *_args) -> None:
+        pass
+
+
+class _FakeWebEnginePage:
+    def runJavaScript(self, *_args) -> None:
+        pass
+
+
+class _FakeWebEngineView(QWidget):
+    loadFinished = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._settings = _FakeWebEngineSettings()
+        self._page = _FakeWebEnginePage()
+        self.html = ""
+
+    def settings(self):
+        return self._settings
+
+    def page(self):
+        return self._page
+
+    def setHtml(self, html, *_args) -> None:
+        self.html = html
+
+
+@pytest.fixture(autouse=True)
+def use_fake_webengine_for_ui_unit_tests(monkeypatch) -> None:
+    # Keep UI unit tests deterministic and avoid launching a Chromium subprocess
+    # on headless CI runners. The generated MapLibre page is asserted separately.
+    monkeypatch.setattr("swarmatlas.ui.QWebEngineView", _FakeWebEngineView)
+    monkeypatch.setattr(WorldMap, "_profile_configured", True)
 
 
 def test_main_window_exposes_system_theme_language_and_region_views(
