@@ -9,7 +9,7 @@ Allowed operations:
 - Read OS TCP/UDP connection-owner tables through the optional Rust extension (Windows IP Helper APIs), or through the Python psutil fallback.
 - Read process IDs and, when permitted, process names for observed connections.
 - Read local GeoIP MMDB files selected by the user.
-- Download the public DB-IP Lite City database and Natural Earth map-boundary datasets during first-run setup or scheduled DB-IP refresh. These reference-data downloads do not contain observed peer IPs, process names, PIDs or traffic statistics.
+- Download the public DB-IP Lite City database during first-run setup or scheduled DB-IP refresh. This reference-data download does not contain observed peer IPs, process names, PIDs or traffic statistics.
 - Load the pinned MapLibre GL JavaScript/CSS assets from unpkg and request the OpenFreeMap Dark style, vector tiles and required glyph resources for the visible map viewport. Qt WebEngine uses a disk cache capped at 128 MiB. These requests expose the user's public source IP and viewed tile coordinates to the respective services, but do not include observed destination IPs, process metadata or traffic counters.
 - If the user explicitly selects an online GeoIP provider, send the public destination IP being looked up to that selected provider. No process names, PIDs, traffic totals or packet contents are included in the lookup.
 - Install the project's declared Python dependencies and, when available, a verified prebuilt Rust wheel from the project's public GitHub release during Windows first-run setup.
