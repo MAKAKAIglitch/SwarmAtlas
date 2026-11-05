@@ -60,7 +60,7 @@ echo.
 echo ============================================================
 echo ACTION REVIEW
 echo ============================================================
-echo Adapter Interface Index: %SWARM_IFINDEX%
+echo Adapter Interface Index: validated by Windows
 if "%MODE%"=="1" (
     echo Mode: Standard adapter repair
     echo  1. Flush DNS cache.
