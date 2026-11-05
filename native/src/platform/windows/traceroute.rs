@@ -313,7 +313,7 @@ pub(crate) fn traceroute_probe(
 
 #[cfg(test)]
 mod tests {
-    use super::{checksum, icmp_kind, is_destination_reply};
+    use super::{checksum, icmp_kind, is_destination_reply, resolve_target};
 
     #[test]
     fn ipv4_echo_checksum_is_valid() {
@@ -341,5 +341,18 @@ mod tests {
             "192.0.2.1".parse().unwrap(),
             "192.0.2.1".parse().unwrap()
         ));
+    }
+}
+
+
+#[cfg(test)]
+mod address_family_tests {
+    use super::resolve_target;
+
+    #[test]
+    fn resolves_literal_addresses_for_requested_family() {
+        assert!(resolve_target("127.0.0.1", 443, 4).unwrap().is_ipv4());
+        assert!(resolve_target("::1", 443, 6).unwrap().is_ipv6());
+        assert!(resolve_target("127.0.0.1", 443, 6).is_err());
     }
 }
