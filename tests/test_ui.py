@@ -420,6 +420,6 @@ def test_csv_export_writer_uses_utf8_bom_and_preserves_values(tmp_path: Path) ->
     path = tmp_path / "export.csv"
     MainWindow._write_csv(str(path), ["ip", "location"], [["8.8.8.8", "Москва"]])
     content = path.read_bytes()
-    assert content.startswith(b"\\xef\\xbb\\xbf")
+    assert content[:3] == bytes((239, 187, 191))
     assert "Москва".encode("utf-8") in content
     assert b"8.8.8.8" in content
