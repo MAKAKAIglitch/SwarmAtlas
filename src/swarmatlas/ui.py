@@ -458,9 +458,20 @@ html,body,#map {{width:100%;height:100%;margin:0;padding:0;overflow:hidden;backg
 .swarm-popup-traffic {{font-weight:700;color:#8bdcff}}
 .maplibregl-popup-tip {{border-top-color:#111e2e;border-bottom-color:#111e2e}}
 #map-status {{position:absolute;z-index:5;left:12px;bottom:12px;padding:7px 10px;border-radius:7px;color:#d7e2ef;background:#101c2bdc;font:12px 'Segoe UI',sans-serif;display:none}}
+#map-legend {{position:absolute;z-index:4;left:12px;top:12px;padding:8px 10px;border-radius:8px;color:#d7e2ef;background:#101c2be8;border:1px solid #26364b;font:11px 'Segoe UI',sans-serif;pointer-events:none}}
+.legend-row {{display:flex;align-items:center;gap:7px;margin-top:5px}}
+.legend-dot {{width:8px;height:8px;border-radius:50%;display:inline-block}}
+.legend-upload {{background:#ff9854;box-shadow:0 0 9px #ff9854}}
+.legend-download {{background:#35c8ff;box-shadow:0 0 9px #35c8ff}}
+.legend-mixed {{background:#a78bfa;box-shadow:0 0 9px #a78bfa}}
 </style>
 </head><body>
 <div id="map"></div><div id="map-status"></div>
+<div id="map-legend">Traffic intensity
+ <div class="legend-row"><span class="legend-dot legend-upload"></span>Upload-heavy</div>
+ <div class="legend-row"><span class="legend-dot legend-download"></span>Download-heavy</div>
+ <div class="legend-row"><span class="legend-dot legend-mixed"></span>Mixed traffic</div>
+</div>
 <script>
 window.showMapError=function(message){{
  const status=document.getElementById('map-status');
@@ -577,6 +588,11 @@ window.maplibregl=maplibregl;
    row('Remote port',p.port||'—');
    row('Local port',p.local_port||'—');
    row('State',p.connection_state||'—');
+   const dateText=function(value){{
+    const n=Number(value)||0;return n>0?new Date(n*1000).toLocaleString():'—';
+   }};
+   row('First seen',dateText(p.first_seen));
+   row('Last seen',dateText(p.last_seen));
    section('Network');
    row('ASN / provider',p.organization?(p.asn?'AS'+p.asn+' · ':'')+p.organization:(p.asn?'AS'+p.asn:'—'));
    row('Country / region',[p.country,p.region].filter(Boolean).join(' / ')||'—');
@@ -668,6 +684,8 @@ window.maplibregl=maplibregl;
                 "asn":int(item.get("asn") or 0),
                 "organization":str(item.get("organization") or item.get("isp") or ""),
                 "latitude":lat, "longitude":lon,
+                "first_seen":float(item.get("first_seen") or 0),
+                "last_seen":float(item.get("last_seen") or 0),
                 "traffic_upload_bytes":upload_bytes,
                 "traffic_download_bytes":download_bytes,
                 "traffic_upload_bps":upload_bps,
@@ -682,6 +700,7 @@ window.maplibregl=maplibregl;
                 process_id, process_name, properties["protocol"], properties["port"],
                 properties["local_port"], properties["connection_state"],
                 properties["asn"], properties["organization"],
+                properties["first_seen"], properties["last_seen"],
                 upload_bytes, download_bytes, round(upload_bps, 1), round(download_bps, 1),
                 traffic_flow_count,
             ))
