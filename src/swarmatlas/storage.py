@@ -563,7 +563,7 @@ class Store:
                        recent.local_port, recent.process_name, recent.connection_state,
                        recent.country_code, recent.country, recent.region, recent.city,
                        recent.asn, recent.organization, recent.isp, recent.latitude,
-                       recent.longitude, recent.last_seen,
+                       recent.longitude, recent.first_seen, recent.last_seen,
                        COALESCE(flow.upload_bytes, 0) AS traffic_upload_bytes,
                        COALESCE(flow.download_bytes, 0) AS traffic_download_bytes,
                        COALESCE(flow.upload_bps, 0) AS traffic_upload_bps,
