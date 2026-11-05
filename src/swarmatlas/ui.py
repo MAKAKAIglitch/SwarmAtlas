@@ -706,6 +706,7 @@ window.maplibregl=maplibregl;
      .catch(function(error){{console.debug('Company logo unavailable; keeping initials',id,error);}});
    }});
   }};
+  window.ensureCompanyIcons(window.pendingSwarmFeatures||[]);
   map.addLayer({{
    id:'endpoint-company-icons',type:'symbol',source:'swarm-endpoints',minzoom:5.2,
    filter:['all',['!', ['has','point_count']],['!=',['get','company_icon'],'']],
@@ -715,7 +716,6 @@ window.maplibregl=maplibregl;
     'icon-padding':3
    }}
   }});
-  window.ensureCompanyIcons(window.pendingSwarmFeatures||[]);
   map.on('click','endpoint-clusters',async function(event){{
    const feature=event.features&&event.features[0];if(!feature)return;
    const source=map.getSource('swarm-endpoints');
