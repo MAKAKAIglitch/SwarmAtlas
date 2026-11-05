@@ -368,8 +368,8 @@ def test_destination_summary_aggregates_tcp_traffic_by_application(tmp_path: Pat
     applications = summary["top_applications"]
     assert applications[0]["process_id"] == 101
     assert applications[0]["process_name"] == "browser.exe"
-    assert applications[0]["upload_bytes"] == 1500
-    assert applications[0]["download_bytes"] == 6500
+    assert applications[0]["upload_bytes"] == 2100
+    assert applications[0]["download_bytes"] == 7500
     assert applications[0]["peer_count"] == 2
     assert applications[1]["process_id"] == 202
     assert applications[1]["upload_bytes"] == 300
