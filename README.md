@@ -220,6 +220,12 @@ The following ideas are intentionally recorded here so they are not forgotten. T
 - **Map layers and test history:** allow switching between peer activity, ping targets, traceroute paths and speed-test server/results. Save diagnostic history locally only when the user enables it.
 - **Better UDP destination visibility:** investigate Windows ETW/network-event metadata or another documented, read-only source that can expose UDP source/destination tuples. Keep local UDP socket counts separate from verified remote peers, avoid fabricating endpoints, and do not capture or store packet payloads.
 
+## Per-application TCP traffic (optional)
+
+Enable **Track per-app TCP traffic** in the sidebar to collect Windows TCP Extended Statistics (ESTATS) through the Rust backend. SwarmAtlas aggregates the measured TCP payload-byte counters by owning process and shows upload, download, total bytes and distinct peers. This feature is opt-in and may require launching SwarmAtlas as Administrator; Windows can deny access to TCP ESTATS otherwise.
+
+This is not a complete accounting of all application network usage: UDP, unsupported TCP connections, traffic not exposed by Windows ESTATS and connections without a reliable process owner are not included. Interface totals remain the authoritative adapter-wide counters. Per-application figures must be presented as measured TCP ESTATS bytes, not as total network usage. The feature does not capture packet payloads or install a packet filter or driver.
+
 ## Development and license
 
     python -m pytest
