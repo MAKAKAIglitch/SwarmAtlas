@@ -121,7 +121,8 @@ fn echo_packet(target: SocketAddr, ttl: u32, source: Option<IpAddr>) -> Result<V
 }
 
 fn select_ipv6_source(target: SocketAddr) -> Result<Ipv6Addr> {
-    let destination = SocketAddr::new(target.ip(), UDP_BASE_PORT);
+    let mut destination = target;
+    destination.set_port(UDP_BASE_PORT);
     let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
     // UDP connect selects a route and local source address; it sends no datagram.
     socket.connect(&SockAddr::from(destination))?;
@@ -250,7 +251,8 @@ fn udp_probe(target: SocketAddr, ttl: u32, timeout: Duration) -> Result<TracePro
     };
     sender.bind(&SockAddr::from(local))?;
     let port = UDP_BASE_PORT.saturating_add((ttl - 1).min(1000) as u16);
-    let destination = SocketAddr::new(target.ip(), port);
+    let mut destination = target;
+    destination.set_port(port);
     let payload = format!("SwarmAtlas traceroute ttl={ttl}").into_bytes();
     sender.send_to(&payload, &SockAddr::from(destination))?;
     receive_reply(&receiver, target, timeout)
@@ -264,7 +266,8 @@ fn tcp_probe(target: SocketAddr, ttl: u32, timeout: Duration, port: u16) -> Resu
         Some(Protocol::TCP),
     )?;
     set_hop_limit(&sender, target, ttl)?;
-    let destination = SocketAddr::new(target.ip(), port);
+    let mut destination = target;
+    destination.set_port(port);
     let started = Instant::now();
     let connect_result = sender.connect_timeout(&SockAddr::from(destination), timeout);
     let connect_elapsed = started.elapsed().as_secs_f64() * 1000.0;
