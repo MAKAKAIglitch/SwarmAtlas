@@ -25,7 +25,7 @@ The dashboard shows upload and download independently, updates the live rates ev
 
 ## Manual Windows network repair
 
-The optional `tools/SwarmAtlas_Network_Repair.bat` utility is a separate, user-started maintenance tool; it is not run by the dashboard or by the passive monitor.
+The optional [SwarmAtlas_Network_Repair.bat](tools/SwarmAtlas_Network_Repair.bat) utility is a separate, user-started maintenance tool; it is not run by the dashboard or by the passive monitor.
 
 - It requests elevation through the Windows UAC prompt and lists visible network adapters, including virtual adapters.
 - The user selects one adapter by its Windows interface index, reviews the exact actions, and must type `YES` before changes begin.
