@@ -9,7 +9,7 @@ import sqlite3
 import time
 from typing import Any
 
-from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
+from PySide6.QtCore import QAbstractAnimation, QEvent, QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
@@ -91,7 +91,7 @@ class SmoothScrollArea(QScrollArea):
             movement = -(angle_delta / 120.0) * 92.0
             duration = 360
 
-        current_target = self._scroll_target if self._scroll_animation.state() == QPropertyAnimation.State.Running else bar.value()
+        current_target = self._scroll_target if self._scroll_animation.state() == QAbstractAnimation.State.Running else bar.value()
         self._scroll_target = max(
             bar.minimum(),
             min(bar.maximum(), round(current_target + movement)),
