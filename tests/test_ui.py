@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QObject, Signal
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -22,7 +22,10 @@ class _FakeWebEngineSettings:
         pass
 
 
-class _FakeWebEnginePage:
+class _FakeWebEnginePage(QObject):
+    def __init__(self):
+        super().__init__()
+
     def runJavaScript(self, *_args) -> None:
         pass
 
