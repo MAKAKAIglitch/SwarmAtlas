@@ -112,6 +112,8 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert "maplibregl.Map" in html
     assert "cluster:true" in WorldMap._map_html()
     assert "getClusterExpansionZoom" in WorldMap._map_html()
+    assert "clusterProperties" in WorldMap._map_html()
+    assert "endpoint-cluster-glow" in WorldMap._map_html()
     widget.zoom_in()
     assert widget._zoom > 1.15
     widget.zoom_out()
