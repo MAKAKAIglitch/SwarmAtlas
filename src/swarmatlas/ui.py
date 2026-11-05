@@ -488,7 +488,7 @@ window.setEndpointDetails=function(details){{
 window.setSwarmEndpoints=function(features){{
  window.pendingSwarmFeatures=features||[];
  const map=window.swarmAtlasMap;
- if(!map||!map.isStyleLoaded()||window.swarmAtlasMapUpdatePending)return;
+ if(!map||!map.getSource('swarm-endpoints')||window.swarmAtlasMapUpdatePending)return;
  window.swarmAtlasMapUpdatePending=true;
  window.requestAnimationFrame(function(){{
   window.swarmAtlasMapUpdatePending=false;
