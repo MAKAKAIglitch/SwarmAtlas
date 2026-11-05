@@ -245,14 +245,13 @@ fn receive_reply(
     timeout: Duration,
 ) -> Result<(Option<String>, Option<f64>, bool, String)> {
     let started = Instant::now();
-    receive_reply_since(receiver, target, timeout, timeout, started)
+    receive_reply_since(receiver, target, timeout, started)
 }
 
 fn receive_reply_since(
     receiver: &Socket,
     target: SocketAddr,
     wait_timeout: Duration,
-    rtt_timeout: Duration,
     rtt_started: Instant,
 ) -> Result<(Option<String>, Option<f64>, bool, String)> {
     let wait_started = Instant::now();
@@ -361,7 +360,6 @@ fn tcp_probe(target: SocketAddr, ttl: u32, timeout: Duration, port: u16) -> Resu
         &receiver,
         target,
         Duration::from_millis(100),
-        timeout,
         started,
     ) {
         Ok((Some(address), rtt, reached, status)) => Ok((Some(address), rtt, reached, status)),
