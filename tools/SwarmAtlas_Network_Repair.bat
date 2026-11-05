@@ -52,9 +52,13 @@ echo       - A Windows restart may be required
 echo.
 echo   [Q] Cancel
 echo.
-set /p "MODE=Select 1, 2 or Q: "
-if /i "%MODE%"=="Q" goto :cancelled
-if not "%MODE%"=="1" if not "%MODE%"=="2" goto :invalid_mode
+choice /c 12Q /n /m "Select 1, 2 or Q: "
+if errorlevel 3 goto :cancelled
+if errorlevel 2 (
+    set "MODE=2"
+) else (
+    set "MODE=1"
+)
 
 echo.
 echo ============================================================
@@ -84,8 +88,9 @@ echo The adapter may briefly lose connectivity.
 echo If you are connected remotely through this adapter, the session may drop.
 echo A static IP configuration is not intentionally removed by this script.
 echo.
-set /p "CONFIRM=Type YES to begin the selected repair: "
-if /i not "%CONFIRM%"=="YES" goto :cancelled
+set /p "SWARM_CONFIRM=Type YES to begin the selected repair: "
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if($env:SWARM_CONFIRM -ieq 'YES'){exit 0}else{exit 1}"
+if errorlevel 1 goto :cancelled
 
 echo.
 echo Starting repair. Log: "%LOG_FILE%"
@@ -128,8 +133,9 @@ echo.
 echo Winsock reset affects the entire Windows networking stack.
 echo VPN clients, endpoint security software and other network tools may
 echo need repair afterwards. A Windows restart may be required.
-set /p "WINSOCK_CONFIRM=Type RESET to also reset Winsock, or press Enter to skip: "
-if /i "%WINSOCK_CONFIRM%"=="RESET" goto :winsock_reset
+set /p "SWARM_WINSOCK_CONFIRM=Type RESET to also reset Winsock, or press Enter to skip: "
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if($env:SWARM_WINSOCK_CONFIRM -ieq 'RESET'){exit 0}else{exit 1}"
+if not errorlevel 1 goto :winsock_reset
 echo Winsock reset skipped. Standard adapter repair remains complete.
 echo Winsock reset skipped by user.>>"%LOG_FILE%"
 goto :verify_adapter
