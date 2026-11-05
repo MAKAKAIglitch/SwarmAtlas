@@ -560,6 +560,7 @@ window.setEndpointDetails=function(details){{
 window.setSwarmEndpoints=function(features){{
  window.pendingSwarmFeatures=features||[];
  const map=window.swarmAtlasMap;
+ if(window.ensureCompanyIcons)window.ensureCompanyIcons(window.pendingSwarmFeatures);
  if(!map||!map.getSource('swarm-endpoints')||window.swarmAtlasMapUpdatePending)return;
  window.swarmAtlasMapUpdatePending=true;
  window.requestAnimationFrame(function(){{
@@ -660,6 +661,54 @@ window.maplibregl=maplibregl;
     'circle-stroke-color':'#071321','circle-stroke-width':1.5
    }}
   }});
+  const companyIconLoads=new Set();
+  window.ensureCompanyIcons=function(features){{
+   const companies=new Map();
+   (features||[]).forEach(function(feature){{
+    const p=feature.properties||{{}};
+    if(p.company_icon&&p.company_slug&&p.company_color&&!map.hasImage(p.company_icon))
+     companies.set(p.company_icon,{{slug:p.company_slug,color:p.company_color}});
+   }});
+   companies.forEach(function(meta,id){{
+    if(companyIconLoads.has(id))return;
+    companyIconLoads.add(id);
+    const url='https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/'+encodeURIComponent(meta.slug)+'.svg';
+    fetch(url,{{mode:'cors',cache:'force-cache'}})
+     .then(function(response){{if(!response.ok)throw new Error('Icon not found');return response.text();}})
+     .then(function(svg){{
+      if(!svg.trim().startsWith('<svg'))throw new Error('Invalid brand icon');
+      const normalized=svg.replace(/<svg\\b([^>]*)>/,'<svg$1 width="64" height="64" fill="#ffffff">')
+       .replace(/currentColor/g,'#ffffff');
+      const blobUrl=URL.createObjectURL(new Blob([normalized],{{type:'image/svg+xml'}}));
+      const image=new Image();
+      image.onload=function(){{
+       try{{
+        const canvas=document.createElement('canvas');canvas.width=64;canvas.height=64;
+        const context=canvas.getContext('2d');
+        context.beginPath();context.arc(32,32,31,0,Math.PI*2);context.fillStyle=meta.color;context.fill();
+        context.drawImage(image,15,15,34,34);
+        if(!map.hasImage(id))map.addImage(id,context.getImageData(0,0,64,64),{{pixelRatio:2}});
+        map.triggerRepaint();
+       }}catch(error){{console.debug('Company icon render skipped',id,error);}}
+       URL.revokeObjectURL(blobUrl);
+      }};
+      image.onerror=function(){{URL.revokeObjectURL(blobUrl);}};
+      image.src=blobUrl;
+     }})
+     .catch(function(error){{console.debug('Company icon unavailable',id,error);}})
+     .finally(function(){{companyIconLoads.delete(id);}});
+   }});
+  }};
+  map.addLayer({{
+   id:'endpoint-company-icons',type:'symbol',source:'swarm-endpoints',
+   filter:['all',['!', ['has','point_count']],['!=',['get','company_icon'],'']],
+   layout:{{
+    'icon-image':['get','company_icon'],'icon-size':0.72,
+    'icon-anchor':'center','icon-allow-overlap':true,'icon-ignore-placement':true,
+    'icon-padding':1
+   }}
+  }});
+  window.ensureCompanyIcons(window.pendingSwarmFeatures||[]);
   map.on('click','endpoint-clusters',async function(event){{
    const feature=event.features&&event.features[0];if(!feature)return;
    const source=map.getSource('swarm-endpoints');
@@ -679,6 +728,10 @@ window.maplibregl=maplibregl;
    const subtitle=document.createElement('div');subtitle.className='swarm-popup-subtitle';
    subtitle.textContent=[p.city,p.region,p.country].filter(Boolean).join(', ')||'Location unavailable';
    box.append(subtitle);
+   if(p.company_name){{
+    const company=document.createElement('div');company.className='swarm-popup-subtitle';
+    company.textContent='Network owner: '+p.company_name;box.append(company);
+   }}
    const bytes=function(value){{
     let n=Math.max(0,Number(value)||0),units=['B','KB','MB','GB','TB'],i=0;
     while(n>=1024&&i<units.length-1){{n/=1024;i++;}}
