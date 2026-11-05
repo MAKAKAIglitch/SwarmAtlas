@@ -143,6 +143,8 @@ goto :verify_adapter
 :winsock_reset
 echo [4/4] Resetting Winsock catalog...
 echo Winsock reset confirmed.>>"%LOG_FILE%"
+echo Existing Winsock catalog saved in the repair log.>>"%LOG_FILE%"
+netsh winsock show catalog >>"%LOG_FILE%" 2>&1
 netsh winsock reset >>"%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo ERROR: Winsock reset returned an error. See log.
