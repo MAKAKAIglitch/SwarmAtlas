@@ -42,7 +42,7 @@ The default monitor only reads OS counters, socket tables and process metadata. 
 - install kernel drivers, NDIS filters, packet-capture drivers, services, scheduled tasks, or startup entries;
 - install or configure WinDivert, Npcap, WinPcap, WFP filters/callouts, or firewall rules;
 - change IP addresses, routes, DNS, proxy settings, adapter configuration, or Windows network services;
-- open listening ports, create network tunnels, or send traffic on behalf of other applications;
+- open listening ports, create network tunnels, or send traffic on behalf of other applications. The explicitly started Ping and Traceroute tools do send their own diagnostic probes;
 - capture, inspect, or save packet payloads;
 - require administrator privileges for interface counters;
 - upload telemetry or traffic statistics to SwarmAtlas servers.
