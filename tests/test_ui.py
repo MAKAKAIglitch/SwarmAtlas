@@ -15,6 +15,7 @@ from swarmatlas import config
 from swarmatlas.theme import get_palette
 from swarmatlas.i18n import tr
 from swarmatlas.diagnostics_ui import DiagnosticsDialog
+from swarmatlas.native import NATIVE_TRACEROUTE
 from swarmatlas.ui import EndpointPingBridge, GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, SmoothScrollArea, TrafficChart, WorldMap
 
 
@@ -435,7 +436,9 @@ def test_diagnostics_dialog_exposes_ping_and_icmp_traceroute() -> None:
     assert dialog.ping_family.count() == 2
     assert dialog.trace_family.count() == 2
     assert dialog.trace_method.itemData(0) == "icmp"
-    assert not dialog.trace_method.model().item(1).isEnabled()
-    assert not dialog.trace_method.model().item(2).isEnabled()
+    assert dialog.trace_method.model().item(1).isEnabled() is NATIVE_TRACEROUTE
+    assert dialog.trace_method.model().item(2).isEnabled() is NATIVE_TRACEROUTE
+    assert dialog.trace_probes.value() == 3
+    assert dialog.trace_port.value() == 443
     dialog.close()
     app.processEvents()
