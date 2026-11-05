@@ -1,5 +1,10 @@
 pub(crate) type TcpConnection = (String, u16, String, u32, u16, String);
 pub(crate) type UdpBinding = (String, u16, u32);
+pub(crate) type TcpFlowCounter = (String, u16, u32, u16, u64, u64);
+
+pub(crate) fn collect_tcp_flow_stats(_limit: usize) -> Result<Vec<TcpFlowCounter>, String> {
+    Err("TCP flow statistics currently support Windows only".to_owned())
+}
 
 pub(crate) fn list_tcp_connections(_limit: usize) -> Result<Vec<TcpConnection>, String> {
     Err("The native SwarmAtlas monitor currently supports Windows only".to_owned())

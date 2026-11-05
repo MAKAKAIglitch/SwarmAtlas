@@ -6,6 +6,7 @@ mod network;
 mod platform;
 
 use platform::{
+    collect_tcp_flow_stats as read_tcp_flow_stats,
     count_udp_bindings as read_udp_count,
     list_network_interfaces as read_network_interfaces,
     list_tcp_connections as read_tcp_connections,
@@ -32,6 +33,15 @@ fn list_udp_bindings(
 ) -> PyResult<Vec<platform::UdpBinding>> {
     let bounded_limit = limit.min(100_000);
     py.detach(move || read_udp_bindings(bounded_limit))
+        .map_err(PyRuntimeError::new_err)
+}
+
+/// Read TCP payload byte counters for established connections to public IPs.
+#[pyfunction]
+#[pyo3(signature = (limit=2000))]
+fn collect_tcp_flow_stats(py: Python<'_>, limit: usize) -> PyResult<Vec<platform::TcpFlowCounter>> {
+    let bounded_limit = limit.clamp(1, 100_000);
+    py.detach(move || read_tcp_flow_stats(bounded_limit))
         .map_err(PyRuntimeError::new_err)
 }
 
@@ -97,6 +107,7 @@ fn capabilities() -> Vec<&'static str> {
         "map-geometry-v1",
         "network-interfaces-v1",
         "process-names-v1",
+        "tcp-flow-estats-v1",
         "ipv4",
         "ipv6",
         "read-only",
@@ -108,6 +119,7 @@ fn _swarmatlas_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(list_tcp_connections, module)?)?;
     module.add_function(wrap_pyfunction!(list_udp_bindings, module)?)?;
     module.add_function(wrap_pyfunction!(count_udp_bindings, module)?)?;
+    module.add_function(wrap_pyfunction!(collect_tcp_flow_stats, module)?)?;
     module.add_function(wrap_pyfunction!(list_network_interfaces, module)?)?;
     module.add_function(wrap_pyfunction!(resolve_process_names, module)?)?;
     module.add_function(wrap_pyfunction!(project_and_simplify_rings, module)?)?;
