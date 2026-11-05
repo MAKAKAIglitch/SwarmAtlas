@@ -29,6 +29,8 @@ from .i18n import tr
 _RTT_RE = re.compile(r"(?:time|время)\s*[=<]\s*([\d.,]+)\s*(?:ms|мс)", re.IGNORECASE)
 _RTT_GENERIC_RE = re.compile(r"([<>]?\s*\d+(?:[.,]\d+)?)\s*(?:ms|мс)\b", re.IGNORECASE)
 _IP_RE = re.compile(r"(?<![0-9A-Fa-f:.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9A-Fa-f:.])|(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f:]{0,4}(?![0-9A-Fa-f:])")
+_TRACE_TIME_RE = re.compile(r"(?:<\s*)?(\d+(?:[.,]\d+)?)\s*(?:ms|мс)?", re.IGNORECASE)
+_DNS_THREADS: set[QThread] = set()
 
 
 def normalize_target(value: str) -> str:
@@ -94,11 +96,11 @@ def parse_traceroute_line(line: str) -> dict[str, Any] | None:
             break
         except ValueError:
             continue
+    time_region = remainder.split(address, 1)[0] if address else remainder
     rtts: list[float] = []
-    for value in _RTT_GENERIC_RE.findall(remainder):
-        cleaned = value.replace(" ", "").replace(",", ".").lstrip("<>")
+    for value in _TRACE_TIME_RE.findall(time_region):
         try:
-            rtts.append(float(cleaned))
+            rtts.append(float(value.replace(",", ".")))
         except ValueError:
             pass
     if "*" in remainder or not address:
@@ -415,7 +417,8 @@ class DiagnosticsDialog(QDialog):
             self.trace_table.setItem(row, column, QTableWidgetItem(value))
         address = parsed["address"]
         if address:
-            worker = _ReverseDnsThread(address, self)
+            worker = _ReverseDnsThread(address)
+            _DNS_THREADS.add(worker)
             worker.resolved.connect(self._set_reverse_dns)
             worker.finished.connect(lambda thread=worker: self._release_dns_thread(thread))
             self._dns_threads.append(worker)
@@ -432,6 +435,7 @@ class DiagnosticsDialog(QDialog):
     def _release_dns_thread(self, thread: _ReverseDnsThread) -> None:
         if thread in self._dns_threads:
             self._dns_threads.remove(thread)
+        _DNS_THREADS.discard(thread)
         thread.deleteLater()
 
     def _trace_finished(self, _code: int = 0, _status: QProcess.ExitStatus = QProcess.ExitStatus.NormalExit) -> None:
@@ -470,4 +474,5 @@ class DiagnosticsDialog(QDialog):
                 process.waitForFinished(500)
         for thread in list(self._dns_threads):
             thread.wait(500)
+        # DNS workers are kept alive globally until their lookup finishes.
         super().closeEvent(event)
