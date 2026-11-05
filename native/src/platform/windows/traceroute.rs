@@ -356,12 +356,7 @@ fn tcp_probe(target: SocketAddr, ttl: u32, timeout: Duration, port: u16) -> Resu
         ));
     }
 
-    match receive_reply_since(
-        &receiver,
-        target,
-        Duration::from_millis(100),
-        started,
-    ) {
+    match receive_reply_since(&receiver, target, Duration::from_millis(100), started) {
         Ok((Some(address), rtt, reached, status)) => Ok((Some(address), rtt, reached, status)),
         Ok((None, _, _, _)) => Ok((None, None, false, "timeout".to_owned())),
         Err(error) => Err(error),
