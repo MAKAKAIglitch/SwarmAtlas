@@ -126,6 +126,8 @@ class Store:
                     local_port INTEGER NOT NULL DEFAULT 0,
                     upload_bytes INTEGER NOT NULL DEFAULT 0,
                     download_bytes INTEGER NOT NULL DEFAULT 0,
+                    upload_bps REAL NOT NULL DEFAULT 0,
+                    download_bps REAL NOT NULL DEFAULT 0,
                     last_upload_counter INTEGER NOT NULL DEFAULT 0,
                     last_download_counter INTEGER NOT NULL DEFAULT 0,
                     first_seen REAL NOT NULL,
@@ -137,8 +139,24 @@ class Store:
                 """
             )
             self._migrate_destinations()
+            self._migrate_traffic_flows()
             self._db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_destinations_last_seen ON destinations(last_seen)"
+            )
+
+    def _migrate_traffic_flows(self) -> None:
+        """Add live per-flow rates without discarding existing traffic counters."""
+        info = {
+            str(row[1])
+            for row in self._db.execute("PRAGMA table_info(traffic_flows)")
+        }
+        if "upload_bps" not in info:
+            self._db.execute(
+                "ALTER TABLE traffic_flows ADD COLUMN upload_bps REAL NOT NULL DEFAULT 0"
+            )
+        if "download_bps" not in info:
+            self._db.execute(
+                "ALTER TABLE traffic_flows ADD COLUMN download_bps REAL NOT NULL DEFAULT 0"
             )
 
     def _migrate_destinations(self) -> None:
@@ -476,7 +494,7 @@ class Store:
                 previous = self._db.execute(
                     """
                     SELECT upload_bytes, download_bytes,
-                           last_upload_counter, last_download_counter
+                           last_upload_counter, last_download_counter, last_seen
                     FROM traffic_flows
                     WHERE ip = ? AND port = ? AND protocol = ?
                       AND process_id = ? AND local_port = ?
@@ -491,12 +509,12 @@ class Store:
                         """
                         INSERT INTO traffic_flows (
                             ip, port, protocol, process_id, local_port,
-                            upload_bytes, download_bytes, last_upload_counter,
-                            last_download_counter, first_seen, last_seen
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            upload_bytes, download_bytes, upload_bps, download_bps,
+                            last_upload_counter, last_download_counter, first_seen, last_seen
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (*key, upload_delta, download_delta, upload_counter,
-                         download_counter, now, now),
+                        (*key, upload_delta, download_delta, 0.0, 0.0,
+                         upload_counter, download_counter, now, now),
                     )
                 else:
                     previous_upload = int(previous["last_upload_counter"])
@@ -509,10 +527,14 @@ class Store:
                         download_counter - previous_download
                         if download_counter >= previous_download else download_counter
                     )
+                    elapsed = max(0.001, now - float(previous["last_seen"]))
+                    upload_bps = upload_delta / elapsed
+                    download_bps = download_delta / elapsed
                     self._db.execute(
                         """
                         UPDATE traffic_flows
                         SET upload_bytes = ?, download_bytes = ?,
+                            upload_bps = ?, download_bps = ?,
                             last_upload_counter = ?, last_download_counter = ?,
                             last_seen = ?
                         WHERE ip = ? AND port = ? AND protocol = ?
@@ -521,6 +543,7 @@ class Store:
                         (
                             int(previous["upload_bytes"]) + upload_delta,
                             int(previous["download_bytes"]) + download_delta,
+                            upload_bps, download_bps,
                             upload_counter, download_counter, now, *key,
                         ),
                     )
@@ -540,8 +563,27 @@ class Store:
                        recent.local_port, recent.process_name, recent.connection_state,
                        recent.country_code, recent.country, recent.region, recent.city,
                        recent.asn, recent.organization, recent.isp, recent.latitude,
-                       recent.longitude, recent.last_seen
+                       recent.longitude, recent.last_seen,
+                       COALESCE(flow.upload_bytes, 0) AS traffic_upload_bytes,
+                       COALESCE(flow.download_bytes, 0) AS traffic_download_bytes,
+                       COALESCE(flow.upload_bps, 0) AS traffic_upload_bps,
+                       COALESCE(flow.download_bps, 0) AS traffic_download_bps,
+                       COALESCE(flow.flow_count, 0) AS traffic_flow_count
                 FROM destinations AS recent
+                LEFT JOIN (
+                    SELECT ip, port, protocol, process_id,
+                           SUM(upload_bytes) AS upload_bytes,
+                           SUM(download_bytes) AS download_bytes,
+                           SUM(upload_bps) AS upload_bps,
+                           SUM(download_bps) AS download_bps,
+                           COUNT(*) AS flow_count
+                    FROM traffic_flows
+                    WHERE last_seen >= ?
+                    GROUP BY ip, port, protocol, process_id
+                ) AS flow
+                  ON flow.ip = recent.ip AND flow.port = recent.port
+                 AND flow.protocol = recent.protocol
+                 AND flow.process_id = recent.process_id
                 WHERE recent.last_seen >= ?
                   AND NOT (
                       recent.process_id = 0
@@ -558,7 +600,8 @@ class Store:
                 ORDER BY recent.last_seen DESC
                 LIMIT 1000
                 """,
-                (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
+                (current - ENDPOINT_ACTIVE_WINDOW_SEC,
+                 current - ENDPOINT_ACTIVE_WINDOW_SEC),
             ).fetchall()
             countries = self._db.execute(
                 """
