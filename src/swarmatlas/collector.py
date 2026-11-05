@@ -49,6 +49,10 @@ VIRTUAL_MARKERS = (
     "loopback", "virtual", "vmware", "virtualbox", "hyper-v", "vethernet",
     "wintun", "wireguard", "zerotier", "tailscale", "tap-", "docker", "wsl",
 )
+NON_SELECTABLE_INTERFACE_MARKERS = (
+    "loopback", "pseudo-interface", "wfp", "qos packet scheduler",
+    "lightweight filter", "light-weight filter",
+)
 _PROCESS_NAME_CACHE: dict[int, tuple[float, str | None]] = {}
 _NATIVE_INTERFACE_FAILED = False
 _NATIVE_PROCESS_LOOKUP_FAILED = False
@@ -107,9 +111,14 @@ def _read_interface_snapshot(
 
 
 def available_interfaces() -> list[str]:
-    """List active adapter aliases from a single OS snapshot."""
+    """List active, user-selectable adapters; omit Windows filter and loopback entries."""
     snapshot = _read_interface_snapshot()
-    return sorted(name for name, state in snapshot.items() if state["is_up"])
+    return sorted(
+        name
+        for name, state in snapshot.items()
+        if state["is_up"]
+        and not any(marker in name.casefold() for marker in NON_SELECTABLE_INTERFACE_MARKERS)
+    )
 
 
 def choose_default_interface(
