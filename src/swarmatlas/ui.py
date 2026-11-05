@@ -409,6 +409,8 @@ class WorldMap(QWidget):
         self._location_source: list[dict[str, Any]] | None = None
         self._location_signature: tuple[tuple[Any, ...], ...] | None = None
         self._features: list[dict[str, Any]] = []
+        self._details: dict[str, dict[str, Any]] = {}
+        self._details_signature: tuple[tuple[Any, ...], ...] | None = None
         self._page_loaded = False
         self._zoom = 1.15
 
@@ -480,6 +482,20 @@ window.showMapError=function(message){{
 window.setTimeout(function(){{
  if(!window.swarmAtlasMapReady)window.showMapError('Map is taking too long to load. Check the connection to OpenFreeMap.');
 }},15000);
+window.setEndpointDetails=function(details){{
+ window.swarmAtlasEndpointDetails=details||{{}};
+}};
+window.setSwarmEndpoints=function(features){{
+ window.pendingSwarmFeatures=features||[];
+ const map=window.swarmAtlasMap;
+ if(!map||!map.isStyleLoaded()||window.swarmAtlasMapUpdatePending)return;
+ window.swarmAtlasMapUpdatePending=true;
+ window.requestAnimationFrame(function(){{
+  window.swarmAtlasMapUpdatePending=false;
+  const source=map.getSource('swarm-endpoints');
+  if(source)source.setData({{type:'FeatureCollection',features:window.pendingSwarmFeatures}});
+ }});
+}};
 </script>
 <script type="module">
 import * as maplibregl from 'https://unpkg.com/maplibre-gl@{cls.MAPLIBRE_VERSION}/dist/maplibre-gl.mjs';
@@ -558,7 +574,9 @@ window.maplibregl=maplibregl;
   map.on('mouseleave','swarm-endpoints',function(){{map.getCanvas().style.cursor='';}});
   map.on('click','swarm-endpoints',function(event){{
    const feature=event.features&&event.features[0];if(!feature)return;
-   const p=feature.properties||{{}},box=document.createElement('div');
+   const base=feature.properties||{{}};
+   const p=Object.assign({{}},base,(window.swarmAtlasEndpointDetails||{{}})[base.endpoint_id]||{{}});
+   const box=document.createElement('div');
    box.className='swarm-popup';
    const title=document.createElement('div');title.className='swarm-popup-title';
    title.textContent=p.ip||'Endpoint';box.append(title);
@@ -619,16 +637,6 @@ window.maplibregl=maplibregl;
   if(!window.swarmAtlasMapReady&&event&&event.error)
    window.showMapError('OpenFreeMap is not reachable. Check internet access.');
  }});
- window.setSwarmEndpoints=function(features){{
-  window.pendingSwarmFeatures=features||[];
-  if(window.swarmAtlasMapUpdatePending)return;
-  window.swarmAtlasMapUpdatePending=true;
-  window.requestAnimationFrame(function(){{
-   window.swarmAtlasMapUpdatePending=false;
-   const source=map.getSource('swarm-endpoints');
-   if(source)source.setData({{type:'FeatureCollection',features:window.pendingSwarmFeatures}});
-  }});
- }};
 }})();
 </script></body></html>"""
 
@@ -638,8 +646,9 @@ window.maplibregl=maplibregl;
             self.web_view.page().runJavaScript(
                 "window.showMapError&&window.showMapError('Map page failed to load.');"
             )
-        elif self._features:
+        else:
             self._send_features()
+            self._send_details()
 
     def _send_features(self) -> None:
         if self._page_loaded:
@@ -648,12 +657,21 @@ window.maplibregl=maplibregl;
                 f"window.setSwarmEndpoints&&window.setSwarmEndpoints({payload});"
             )
 
+    def _send_details(self) -> None:
+        if self._page_loaded:
+            payload = json.dumps(self._details, ensure_ascii=False, separators=(",", ":"))
+            self.web_view.page().runJavaScript(
+                f"window.setEndpointDetails&&window.setEndpointDetails({payload});"
+            )
+
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
         if locations is self._location_source:
             return
         features: list[dict[str, Any]] = []
-        signature: list[tuple[Any, ...]] = []
+        map_signature: list[tuple[Any, ...]] = []
         valid: list[dict[str, Any]] = []
+        details: dict[str, dict[str, Any]] = {}
+        detail_signature: list[tuple[Any, ...]] = []
         for item in locations[:self.MAX_LOCATIONS]:
             try:
                 lat, lon = float(item["latitude"]), float(item["longitude"])
@@ -669,53 +687,72 @@ window.maplibregl=maplibregl;
             )
             process_id = int(item.get("process_id") or 0)
             process_name = str(item.get("process_name") or "")
+            protocol = str(item.get("protocol") or "")
+            port = int(item.get("port") or 0)
+            local_port = int(item.get("local_port") or 0)
+            connection_state = str(item.get("connection_state") or "")
+            asn = int(item.get("asn") or 0)
+            organization = str(item.get("organization") or item.get("isp") or "")
             upload_bytes = max(0, int(item.get("traffic_upload_bytes") or 0))
             download_bytes = max(0, int(item.get("traffic_download_bytes") or 0))
             upload_bps = max(0.0, float(item.get("traffic_upload_bps") or 0))
             download_bps = max(0.0, float(item.get("traffic_download_bps") or 0))
-            traffic_flow_count = int(item.get("traffic_flow_count") or 0)
+            flow_count = int(item.get("traffic_flow_count") or 0)
+            endpoint_id = f"{ip}|{port}|{protocol}|{process_id}|{local_port}"
             properties = {
+                "endpoint_id":endpoint_id,
                 "ip":ip, "city":city, "region":region, "country":country,
                 "process_id":process_id, "process_name":process_name,
-                "protocol":str(item.get("protocol") or ""),
-                "port":int(item.get("port") or 0),
-                "local_port":int(item.get("local_port") or 0),
-                "connection_state":str(item.get("connection_state") or ""),
-                "asn":int(item.get("asn") or 0),
-                "organization":str(item.get("organization") or item.get("isp") or ""),
-                "latitude":lat, "longitude":lon,
-                "first_seen":float(item.get("first_seen") or 0),
-                "last_seen":float(item.get("last_seen") or 0),
+                "protocol":protocol, "port":port, "local_port":local_port,
+                "connection_state":connection_state, "asn":asn,
+                "organization":organization, "latitude":lat, "longitude":lon,
+                "traffic_upload_bps":round(upload_bps / 64.0) * 64.0,
+                "traffic_download_bps":round(download_bps / 64.0) * 64.0,
+                "traffic_bps":round((upload_bps + download_bps) / 64.0) * 64.0,
+                "traffic_flow_count":flow_count,
+                "traffic_known":1 if flow_count > 0 else 0,
+            }
+            detail = {
                 "traffic_upload_bytes":upload_bytes,
                 "traffic_download_bytes":download_bytes,
                 "traffic_upload_bps":upload_bps,
                 "traffic_download_bps":download_bps,
-                "traffic_bps":upload_bps + download_bps,
-                "traffic_flow_count":traffic_flow_count,
-                "traffic_known":1 if traffic_flow_count > 0 else 0,
+                "traffic_flow_count":flow_count,
+                "traffic_known":1 if flow_count > 0 else 0,
+                "first_seen":float(item.get("first_seen") or 0),
+                "last_seen":float(item.get("last_seen") or 0),
             }
+            details[endpoint_id] = detail
+            detail_signature.append((
+                endpoint_id, upload_bytes, download_bytes,
+                round(upload_bps, 1), round(download_bps, 1),
+                flow_count, detail["first_seen"], detail["last_seen"],
+            ))
             valid.append(item)
-            signature.append((
-                ip, round(lat, 6), round(lon, 6), city, region, country,
-                process_id, process_name, properties["protocol"], properties["port"],
-                properties["local_port"], properties["connection_state"],
-                properties["asn"], properties["organization"],
-                properties["first_seen"], properties["last_seen"],
-                upload_bytes, download_bytes, round(upload_bps, 1), round(download_bps, 1),
-                traffic_flow_count,
+            map_signature.append((
+                endpoint_id, round(lat, 6), round(lon, 6), city, region, country,
+                process_name, connection_state, asn, organization,
+                round(upload_bps / 64.0), round(download_bps / 64.0), flow_count,
             ))
             features.append({
                 "type":"Feature",
+                "id":endpoint_id,
                 "geometry":{"type":"Point","coordinates":[lon,lat]},
                 "properties":properties,
             })
         self._location_source = locations
-        if tuple(signature) == self._location_signature:
-            return
         self.locations = valid
-        self._location_signature = tuple(signature)
-        self._features = features
-        self._send_features()
+        new_map_signature = tuple(map_signature)
+        if new_map_signature != self._location_signature:
+            self._location_signature = new_map_signature
+            self._features = features
+            self._send_features()
+
+        new_detail_signature = tuple(sorted(detail_signature))
+        if new_detail_signature != self._details_signature:
+            self._details_signature = new_detail_signature
+            self._details = details
+            self._send_details()
 
     def set_theme(self, palette: dict[str, str], empty_text: str) -> None:
         self.palette_colors, self.empty_text = palette, empty_text
