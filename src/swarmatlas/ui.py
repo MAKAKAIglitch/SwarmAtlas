@@ -12,7 +12,7 @@ from typing import Any
 from PySide6.QtCore import QEvent, QEasingCurve, QPropertyAnimation, Qt, QPointF, QRectF, QUrl, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QFont, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QGraphicsOpacityEffect, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QScrollArea, QTableWidget,
     QTableWidgetItem, QToolTip, QVBoxLayout, QWidget, QLineEdit,
@@ -1199,6 +1199,12 @@ class MainWindow(QMainWindow):
         self.geoip_button.clicked.connect(self.configure_geoip_provider)
         side.addWidget(self.geoip_button)
 
+        self.app_stats_checkbox = QCheckBox(self.t("app_stats_enable"))
+        self.app_stats_checkbox.setChecked(bool(self.config.tcp_flow_stats_enabled))
+        self.app_stats_checkbox.setToolTip(self.t("app_traffic_note"))
+        self.app_stats_checkbox.toggled.connect(self.change_app_stats)
+        side.addWidget(self.app_stats_checkbox)
+
         self.geoip_database_button = QPushButton(self.t("geoip_local_database"))
         self.geoip_database_button.setObjectName("quiet")
         self.geoip_database_button.clicked.connect(self.choose_geoip_databases)
@@ -1372,6 +1378,33 @@ class MainWindow(QMainWindow):
         self.peers_card = peers_card
         content_layout.addLayout(bottom)
 
+        app_card = card()
+        app_layout = QVBoxLayout(app_card)
+        app_layout.setContentsMargins(18, 16, 18, 12)
+        app_heading = QHBoxLayout()
+        self.app_traffic_title = make_label(self.t("app_traffic_title"), 13, self.palette["text"], 600)
+        app_heading.addWidget(self.app_traffic_title)
+        app_heading.addStretch(1)
+        self.app_traffic_status = make_label(self.t("app_stats_disabled"), 9, self.palette["muted"])
+        app_heading.addWidget(self.app_traffic_status)
+        app_layout.addLayout(app_heading)
+        self.app_traffic_note = make_label(self.t("app_traffic_note"), 9, self.palette["muted"])
+        app_layout.addWidget(self.app_traffic_note)
+        self.app_table = QTableWidget(0, 6)
+        self.app_table.setHorizontalHeaderLabels([
+            self.t("app_name"), self.t("app_pid"), self.t("app_upload"),
+            self.t("app_download"), self.t("app_total"), self.t("app_connections")
+        ])
+        self.app_table.horizontalHeader().setStretchLastSection(True)
+        self.app_table.verticalHeader().setVisible(False)
+        self.app_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.app_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.app_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.app_table.setShowGrid(False)
+        self.app_table.setMinimumHeight(170)
+        app_layout.addWidget(self.app_table)
+        content_layout.addWidget(app_card)
+
         self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
         content_layout.addWidget(self.data_note)
 
@@ -1450,6 +1483,14 @@ class MainWindow(QMainWindow):
             self.scroll_area.ensureWidgetVisible(self.peers_card, 20, 20)
         else:
             self.scroll_area.verticalScrollBar().setValue(0)
+
+    def change_app_stats(self, enabled: bool) -> None:
+        self.config.tcp_flow_stats_enabled = bool(enabled)
+        self.config.save()
+        self.worker.set_tcp_flow_stats_enabled(enabled)
+        self.app_traffic_status.setText(
+            self.t("app_stats_enabled") if enabled else self.t("app_stats_disabled")
+        )
 
     def change_interface(self) -> None:
         interface = str(self.interface_combo.currentData() or "auto")
@@ -1649,6 +1690,7 @@ class MainWindow(QMainWindow):
         self._fill_countries(snapshot.get("countries", []))
         self._fill_regions(snapshot.get("regions", []))
         self._fill_endpoints(endpoints)
+        self._fill_applications(snapshot.get("top_applications", []), snapshot.get("flow_stats_status", ""))
         if self._map_dialog is not None and self._map_dialog.isVisible():
             self._map_dialog.map_widget.set_locations(endpoints)
         live_note = self.t("data_note_live")
@@ -1738,6 +1780,35 @@ class MainWindow(QMainWindow):
             ])
         update_table(self.endpoint_table, rows)
         self._endpoint_table_source = endpoints
+
+    def _fill_applications(
+        self, applications: list[dict[str, Any]], flow_status: str
+    ) -> None:
+        if not self.config.tcp_flow_stats_enabled:
+            self.app_traffic_status.setText(self.t("app_stats_disabled"))
+            update_table(self.app_table, [])
+            return
+        if flow_status and "unavailable" in flow_status.casefold():
+            self.app_traffic_status.setText(self.t("app_stats_unavailable"))
+        elif not applications:
+            self.app_traffic_status.setText(self.t("app_stats_empty"))
+        else:
+            self.app_traffic_status.setText(flow_status)
+        rows: list[list[str]] = []
+        for item in applications[:100]:
+            process_id = int(item.get("process_id") or 0)
+            process_name = str(item.get("process_name") or "").strip()
+            upload = int(item.get("upload_bytes") or 0)
+            download = int(item.get("download_bytes") or 0)
+            rows.append([
+                process_name or (f"PID {process_id}" if process_id else self.t("unknown")),
+                str(process_id or "—"),
+                format_bytes(upload),
+                format_bytes(download),
+                format_bytes(upload + download),
+                str(int(item.get("peer_count") or 0)),
+            ])
+        update_table(self.app_table, rows)
 
     def closeEvent(self, event: Any) -> None:
         if self.worker.isRunning() and not self.worker.stop():
