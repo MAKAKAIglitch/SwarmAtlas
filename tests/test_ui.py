@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from swarmatlas import config
 from swarmatlas.theme import get_palette
 from swarmatlas.i18n import tr
+from swarmatlas.diagnostics_ui import DiagnosticsDialog
 from swarmatlas.ui import EndpointPingBridge, GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, SmoothScrollArea, TrafficChart, WorldMap
 
 
@@ -425,3 +426,16 @@ def test_csv_export_writer_uses_utf8_bom_and_preserves_values(tmp_path: Path) ->
     assert content[:3] == bytes((239, 187, 191))
     assert "Москва".encode("utf-8") in content
     assert b"8.8.8.8" in content
+
+
+def test_diagnostics_dialog_exposes_ping_and_icmp_traceroute() -> None:
+    app = QApplication.instance() or QApplication([])
+    dialog = DiagnosticsDialog("en")
+    assert dialog.tabs.count() == 2
+    assert dialog.ping_family.count() == 2
+    assert dialog.trace_family.count() == 2
+    assert dialog.trace_method.itemData(0) == "icmp"
+    assert not dialog.trace_method.model().item(1).isEnabled()
+    assert not dialog.trace_method.model().item(2).isEnabled()
+    dialog.close()
+    app.processEvents()
