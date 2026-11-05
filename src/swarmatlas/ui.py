@@ -51,6 +51,59 @@ def make_label(
     return label
 
 
+class SmoothScrollArea(QScrollArea):
+    """A scroll area with a short, interruptible eased glide for wheel input."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._scroll_animation = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
+        self._scroll_animation.setDuration(360)
+        self._scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._scroll_target = 0
+
+    def scroll_to_value(self, value: int, duration: int = 420) -> None:
+        bar = self.verticalScrollBar()
+        self._scroll_target = max(bar.minimum(), min(bar.maximum(), int(value)))
+        self._scroll_animation.stop()
+        self._scroll_animation.setDuration(max(120, int(duration)))
+        self._scroll_animation.setStartValue(bar.value())
+        self._scroll_animation.setEndValue(self._scroll_target)
+        self._scroll_animation.start()
+
+    def scroll_to_widget(self, target: QWidget, margin: int = 20) -> None:
+        content = self.widget()
+        if content is None:
+            return
+        position = target.mapTo(content, target.rect().topLeft()).y()
+        self.scroll_to_value(position - margin)
+
+    def wheelEvent(self, event) -> None:
+        bar = self.verticalScrollBar()
+        pixel_delta = event.pixelDelta().y()
+        if pixel_delta:
+            movement = -pixel_delta * 1.25
+            duration = 260
+        else:
+            angle_delta = event.angleDelta().y()
+            if not angle_delta:
+                super().wheelEvent(event)
+                return
+            movement = -(angle_delta / 120.0) * 92.0
+            duration = 360
+
+        current_target = self._scroll_target if self._scroll_animation.state() == QPropertyAnimation.State.Running else bar.value()
+        self._scroll_target = max(
+            bar.minimum(),
+            min(bar.maximum(), round(current_target + movement)),
+        )
+        self._scroll_animation.stop()
+        self._scroll_animation.setDuration(duration)
+        self._scroll_animation.setStartValue(bar.value())
+        self._scroll_animation.setEndValue(self._scroll_target)
+        self._scroll_animation.start()
+        event.accept()
+
+
 def update_table(table: QTableWidget, rows: list[list[str]]) -> None:
     """Update table cells only when displayed values actually changed."""
     if table.rowCount() == len(rows):
@@ -397,6 +450,25 @@ class WorldMap(QWidget):
     MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
     MAPLIBRE_VERSION = "6.16.0"
     MAX_LOCATIONS = 2000
+    SIMPLE_ICONS_VERSION = "16.36.0"
+    COMPANY_NETWORKS = {
+        15169: ("Google", "google", "#4285F4"),
+        396982: ("Google Cloud", "googlecloud", "#4285F4"),
+        8075: ("Microsoft", "microsoft", "#00A4EF"),
+        16509: ("Amazon Web Services", "amazonaws", "#FF9900"),
+        14618: ("Amazon", "amazonaws", "#FF9900"),
+        13335: ("Cloudflare", "cloudflare", "#F38020"),
+        32934: ("Meta", "meta", "#0866FF"),
+        714: ("Apple", "apple", "#A2AAAD"),
+        2906: ("Netflix", "netflix", "#E50914"),
+        20940: ("Akamai", "akamai", "#0099CC"),
+        54113: ("Fastly", "fastly", "#FF282D"),
+        14061: ("DigitalOcean", "digitalocean", "#0080FF"),
+        16276: ("OVHcloud", "ovh", "#123F6D"),
+        24940: ("Hetzner", "hetzner", "#D50C2D"),
+        31898: ("Oracle Cloud", "oracle", "#F80000"),
+        36351: ("IBM", "ibm", "#1261FE"),
+    }
     _profile_configured = False
 
     def __init__(self, palette: dict[str, str], empty_text: str, cache_namespace: str = "main"):
@@ -636,6 +708,7 @@ window.maplibregl=maplibregl;
    row('First seen',dateText(p.first_seen));
    row('Last seen',dateText(p.last_seen));
    section('Network');
+   row('Network owner',p.company_name||'Not identified');
    row('ASN / provider',p.organization?(p.asn?'AS'+p.asn+' · ':'')+p.organization:(p.asn?'AS'+p.asn:'—'));
    row('Country / region',[p.country,p.region].filter(Boolean).join(' / ')||'—');
    row('City',p.city||'—');
@@ -688,6 +761,34 @@ window.maplibregl=maplibregl;
                 f"window.setEndpointDetails&&window.setEndpointDetails({payload});"
             )
 
+    @classmethod
+    def _company_for_network(cls, asn: int, organization: str = "") -> tuple[str, str, str] | None:
+        """Return a brand only for a known network owner, never by guessing a service."""
+        known = cls.COMPANY_NETWORKS.get(int(asn or 0))
+        if known:
+            return known
+        normalized = str(organization or "").casefold()
+        organization_matches = (
+            ("cloudflare", ("Cloudflare", "cloudflare", "#F38020")),
+            ("google", ("Google", "google", "#4285F4")),
+            ("microsoft", ("Microsoft", "microsoft", "#00A4EF")),
+            ("amazon", ("Amazon Web Services", "amazonaws", "#FF9900")),
+            ("meta", ("Meta", "meta", "#0866FF")),
+            ("apple", ("Apple", "apple", "#A2AAAD")),
+            ("netflix", ("Netflix", "netflix", "#E50914")),
+            ("akamai", ("Akamai", "akamai", "#0099CC")),
+            ("fastly", ("Fastly", "fastly", "#FF282D")),
+            ("digitalocean", ("DigitalOcean", "digitalocean", "#0080FF")),
+            ("ovh", ("OVHcloud", "ovh", "#123F6D")),
+            ("hetzner", ("Hetzner", "hetzner", "#D50C2D")),
+            ("oracle", ("Oracle Cloud", "oracle", "#F80000")),
+            ("ibm", ("IBM", "ibm", "#1261FE")),
+        )
+        for token, result in organization_matches:
+            if token in normalized:
+                return result
+        return None
+
     def set_locations(self, locations: list[dict[str, Any]]) -> None:
         if locations is self._location_source:
             return
@@ -717,6 +818,9 @@ window.maplibregl=maplibregl;
             connection_state = str(item.get("connection_state") or "")
             asn = int(item.get("asn") or 0)
             organization = str(item.get("organization") or item.get("isp") or "")
+            company = self._company_for_network(asn, organization)
+            company_name, company_slug, company_color = company if company else ("", "", "")
+            company_icon = f"company-{company_slug}" if company_slug else ""
             upload_bytes = max(0, int(item.get("traffic_upload_bytes") or 0))
             download_bytes = max(0, int(item.get("traffic_download_bytes") or 0))
             upload_bps = max(0.0, float(item.get("traffic_upload_bps") or 0))
@@ -730,6 +834,8 @@ window.maplibregl=maplibregl;
                 "protocol":protocol, "port":port, "local_port":local_port,
                 "connection_state":connection_state, "asn":asn,
                 "organization":organization, "latitude":lat, "longitude":lon,
+                "company_name":company_name, "company_slug":company_slug,
+                "company_icon":company_icon, "company_color":company_color,
                 "traffic_upload_bps":round(upload_bps / 64.0) * 64.0,
                 "traffic_download_bps":round(download_bps / 64.0) * 64.0,
                 "traffic_bps":round((upload_bps + download_bps) / 64.0) * 64.0,
@@ -743,6 +849,8 @@ window.maplibregl=maplibregl;
                 "traffic_download_bps":download_bps,
                 "traffic_flow_count":flow_count,
                 "traffic_known":1 if flow_count > 0 else 0,
+                "company_name":company_name, "company_slug":company_slug,
+                "company_icon":company_icon, "company_color":company_color,
                 "first_seen":float(item.get("first_seen") or 0),
                 "last_seen":float(item.get("last_seen") or 0),
             }
@@ -755,7 +863,7 @@ window.maplibregl=maplibregl;
             valid.append(item)
             map_signature.append((
                 endpoint_id, round(lat, 6), round(lon, 6), city, region, country,
-                process_name, connection_state, asn, organization,
+                process_name, connection_state, asn, organization, company_icon,
                 round(upload_bps / 64.0), round(download_bps / 64.0), flow_count,
             ))
             features.append({
@@ -1249,7 +1357,7 @@ class MainWindow(QMainWindow):
         self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
         content_layout.addWidget(self.data_note)
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(content)
         self.scroll_area = scroll
@@ -1319,11 +1427,11 @@ class MainWindow(QMainWindow):
             button.style().polish(button)
         self.page_title.setText(self.t("overview_title") if key == "overview" else self.t(key))
         if key == "history":
-            self.scroll_area.ensureWidgetVisible(self.chart_card, 20, 20)
+            self.scroll_area.scroll_to_widget(self.chart_card, 20)
         elif key == "destinations":
-            self.scroll_area.ensureWidgetVisible(self.peers_card, 20, 20)
+            self.scroll_area.scroll_to_widget(self.peers_card, 20)
         else:
-            self.scroll_area.verticalScrollBar().setValue(0)
+            self.scroll_area.scroll_to_value(0)
 
     def change_app_stats(self, enabled: bool) -> None:
         self.config.tcp_flow_stats_enabled = bool(enabled)
