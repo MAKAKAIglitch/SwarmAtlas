@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
 from pathlib import Path
 import math
 import shutil
@@ -395,7 +395,7 @@ class WorldMap(QWidget):
 
     location_selected = Signal(dict)
     MAP_STYLE_URL = "https://tiles.openfreemap.org/styles/dark"
-    MAPLIBRE_VERSION = "5.6.2"
+    MAPLIBRE_VERSION = "6.16.0"
     MAX_LOCATIONS = 2000
     _profile_configured = False
 
@@ -413,13 +413,9 @@ class WorldMap(QWidget):
         self._zoom = 1.15
 
         if not WorldMap._profile_configured:
-            cache_dir = app_data_dir() / "maplibre-cache"
-            cache_dir.mkdir(parents=True, exist_ok=True)
             profile = QWebEngineProfile.defaultProfile()
             profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
             profile.setHttpCacheMaximumSize(128 * 1024 * 1024)
-            profile.setCachePath(str(cache_dir / "http"))
-            profile.setPersistentStoragePath(str(cache_dir / "profile"))
             profile.setHttpUserAgent(profile.httpUserAgent() + " SwarmAtlas/0.3")
             WorldMap._profile_configured = True
 
@@ -455,13 +451,16 @@ html,body,#map {{width:100%;height:100%;margin:0;padding:0;overflow:hidden;backg
 .maplibregl-popup-tip {{border-top-color:#111e2e;border-bottom-color:#111e2e}}
 #map-status {{position:absolute;z-index:5;left:12px;bottom:12px;padding:7px 10px;border-radius:7px;color:#d7e2ef;background:#101c2bdc;font:12px 'Segoe UI',sans-serif;display:none}}
 </style>
-<script src="https://unpkg.com/maplibre-gl@{cls.MAPLIBRE_VERSION}/dist/maplibre-gl.js"
- onerror="window.showMapError&&window.showMapError('MapLibre could not be loaded. Check internet access.')"></script>
 </head><body>
 <div id="map"></div><div id="map-status"></div>
-<script>
+<script type="module">
+import * as maplibregl from 'https://unpkg.com/maplibre-gl@{cls.MAPLIBRE_VERSION}/dist/maplibre-gl.mjs';
+window.maplibregl=maplibregl;
 (function() {{
  const status=document.getElementById('map-status');
+ window.setTimeout(function() {{
+  if(!window.swarmAtlasMapReady) window.showMapError('Map is taking too long to load. Check the connection to OpenFreeMap.');
+ }},15000);
  window.showMapError=function(message){{status.textContent=message;status.style.display='block';}};
  if(!window.maplibregl){{window.showMapError('Map renderer unavailable. Check access to unpkg.com.');return;}}
  const map=new maplibregl.Map({{
