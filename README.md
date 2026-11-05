@@ -13,6 +13,14 @@ SwarmAtlas combines two different Windows data sources:
 
 The dashboard shows upload and download independently, updates the live rates every second, and saves the traffic history locally.
 
+## Dashboard tools
+
+- Search the visible destination list by IP address, remote/local port, protocol, process name or PID, ASN/provider, country, region, city, or connection state. The table keeps the most recent 500 observed endpoints available for filtering.
+- Export the current observed endpoint snapshot to CSV, including process, network, geolocation and available measured TCP flow counters.
+- Export the currently selected traffic-history range to CSV with timestamps and separate upload/download rates. CSV files use UTF-8 with a BOM for compatibility with spreadsheet applications.
+- The sidebar's **Applications** item scrolls directly to the per-application TCP traffic table. Per-application byte totals remain available only when TCP ESTATS collection is enabled and supported by the Windows/Rust backend.
+
+
 **Important accuracy boundary:** Whole-adapter counters do not identify which remote IP received each byte. The default connection-table monitor is a socket snapshot, not a per-flow byte counter. On supported Windows builds with the optional Rust `tcp-flow-estats-v1` capability, enabling **Application traffic statistics** collects TCP payload counters per established public TCP connection through Windows TCP ESTATS. Those counters feed per-endpoint upload/download totals and recent rates, which control map marker size and glow. Windows may deny ESTATS access unless SwarmAtlas is run as Administrator; if unavailable, the map clearly has no per-flow traffic data and the ordinary interface monitor continues working. This optional feature is TCP-only: it does not infer UDP byte totals, packet payloads, or bandwidth for every country. The map shows observed endpoints and approximate IP geolocation; its traffic glow is based only on measured TCP flow counters, never guessed values.
 
 ## Read-only safety model
