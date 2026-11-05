@@ -25,6 +25,7 @@ from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .collector import NetworkWorker, available_interfaces, should_use_power_saver
+from .diagnostics_ui import DiagnosticsDialog
 from .config import AppConfig, app_data_dir
 from .i18n import tr, translate_status
 from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
@@ -1265,6 +1266,11 @@ class MainWindow(QMainWindow):
             side.addWidget(button)
             self.nav_buttons.append(button)
 
+        self.diagnostics_button = QPushButton(self.t("diagnostics_open"))
+        self.diagnostics_button.setObjectName("quiet")
+        self.diagnostics_button.clicked.connect(self.open_diagnostics)
+        side.addWidget(self.diagnostics_button)
+
         side.addStretch(1)
         self.theme_label = make_label(self.t("theme"), 9, self.palette["muted"], 600)
         side.addWidget(self.theme_label)
@@ -1579,6 +1585,10 @@ class MainWindow(QMainWindow):
         self.config.language = preference
         self.config.save()
         self._rebuild_ui()
+
+    def open_diagnostics(self) -> None:
+        dialog = DiagnosticsDialog(self.current_language, self)
+        dialog.exec()
 
     def select_page(self, key: str) -> None:
         for button in self.nav_buttons:
