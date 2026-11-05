@@ -117,6 +117,7 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert "clusterProperties" in WorldMap._map_html()
     assert "endpoint-cluster-glow" in WorldMap._map_html()
     assert "endpoint-company-icons" in html
+    assert "minzoom:5.2" in html
     assert "simple-icons@16.36.0" in html
     assert "Network owner" in html
     widget.zoom_in()
