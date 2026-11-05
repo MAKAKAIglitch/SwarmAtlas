@@ -143,7 +143,11 @@ fn select_ipv6_source(target: SocketAddr) -> Result<Ipv6Addr> {
 fn icmp_offset(packet: &[u8], ipv6: bool) -> Option<usize> {
     let first = *packet.first()?;
     let offset = if ipv6 {
-        if first >> 4 == 6 { 40 } else { 0 }
+        if first >> 4 == 6 {
+            40
+        } else {
+            0
+        }
     } else if first >> 4 == 4 {
         let header_len = ((first & 0x0f) as usize) * 4;
         if header_len < 20 {
@@ -161,12 +165,7 @@ fn icmp_kind(packet: &[u8], ipv6: bool) -> Option<(u8, u8)> {
     Some((packet[offset], packet[offset + 1]))
 }
 
-fn icmp_reply_matches_target(
-    packet: &[u8],
-    ipv6: bool,
-    source: IpAddr,
-    target: IpAddr,
-) -> bool {
+fn icmp_reply_matches_target(packet: &[u8], ipv6: bool, source: IpAddr, target: IpAddr) -> bool {
     let Some(offset) = icmp_offset(packet, ipv6) else {
         return false;
     };
@@ -411,7 +410,9 @@ pub(crate) fn traceroute_probe(
 
 #[cfg(test)]
 mod tests {
-    use super::{checksum, icmp_kind, icmp_reply_matches_target, icmpv6_checksum, is_destination_reply};
+    use super::{
+        checksum, icmp_kind, icmp_reply_matches_target, icmpv6_checksum, is_destination_reply,
+    };
 
     #[test]
     fn ipv4_echo_checksum_is_valid() {
