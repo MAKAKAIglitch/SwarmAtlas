@@ -112,7 +112,12 @@ fn echo_packet(target: SocketAddr, ttl: u32, source: Option<IpAddr>) -> Result<V
                     IpAddr::V6(value) => Some(value),
                     IpAddr::V4(_) => None,
                 })
-                .ok_or_else(|| Error::new(ErrorKind::AddrNotAvailable, "Could not select an IPv6 source address"))?;
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::AddrNotAvailable,
+                        "Could not select an IPv6 source address",
+                    )
+                })?;
             let sum = icmpv6_checksum(source, destination, &packet);
             packet[2..4].copy_from_slice(&sum.to_be_bytes());
         }
@@ -128,7 +133,10 @@ fn select_ipv6_source(target: SocketAddr) -> Result<Ipv6Addr> {
     socket.connect(&SockAddr::from(destination))?;
     match socket.local_addr()?.as_socket().map(|address| address.ip()) {
         Some(IpAddr::V6(address)) if !address.is_unspecified() => Ok(address),
-        _ => Err(Error::new(ErrorKind::AddrNotAvailable, "Could not determine the IPv6 source address")),
+        _ => Err(Error::new(
+            ErrorKind::AddrNotAvailable,
+            "Could not determine the IPv6 source address",
+        )),
     }
 }
 
@@ -261,7 +269,11 @@ fn udp_probe(target: SocketAddr, ttl: u32, timeout: Duration) -> Result<TracePro
 fn tcp_probe(target: SocketAddr, ttl: u32, timeout: Duration, port: u16) -> Result<TraceProbe> {
     let receiver = raw_socket(target, timeout).map_err(permission_hint)?;
     let sender = Socket::new(
-        if target.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 },
+        if target.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        },
         Type::STREAM,
         Some(Protocol::TCP),
     )?;
@@ -387,7 +399,6 @@ mod tests {
         assert_eq!(icmpv6_checksum(source, destination, &packet), 0x2446);
     }
 }
-
 
 #[cfg(test)]
 mod address_family_tests {
