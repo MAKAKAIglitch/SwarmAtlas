@@ -249,7 +249,7 @@ pub(crate) fn traceroute_probe(
     timeout_ms: u64,
     port: u16,
     family: u8,
-) -> Result<TraceProbe, String> {
+) -> std::result::Result<TraceProbe, String> {
     if !(1..=MAX_TTL).contains(&ttl) {
         return Err(format!("TTL must be between 1 and {MAX_TTL}"));
     }
