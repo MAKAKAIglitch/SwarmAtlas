@@ -31,7 +31,7 @@ The optional [SwarmAtlas_Network_Repair.bat](tools/SwarmAtlas_Network_Repair.bat
 - The user selects one adapter by its Windows interface index, reviews the exact actions, and must type `YES` before changes begin.
 - Standard repair flushes the DNS cache, restarts only the selected adapter, renews its DHCP lease only when DHCP is enabled, and records the final adapter status.
 - An optional second mode offers a separate, explicit `RESET` confirmation before resetting the Windows Winsock catalog. This is system-wide, may affect VPN/security/network software, and can require a Windows restart; declining the second confirmation still completes the standard adapter repair.
-- A timestamped log is written under `%ProgramData%\SwarmAtlas\Logs`. The tool does not intentionally remove static IP settings, change DNS servers, reset routes, disable the firewall, or reset the full TCP/IP stack.
+- A timestamped log is written under `%ProgramData%\SwarmAtlas\Logs`. Static IP settings, DNS server settings, routes, and firewall configuration are preserved.
 
 The selected adapter is briefly disconnected during repair. Do not run the operation over a remote session that depends on that adapter unless you can tolerate losing the session.
 
