@@ -47,7 +47,7 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
         "asn": 15169, "organization": "Google LLC",
         "traffic_upload_bytes": 4096, "traffic_download_bytes": 8192,
         "traffic_upload_bps": 512.0, "traffic_download_bps": 2048.0,
-        "traffic_flow_count": 1,
+        "traffic_flow_count": 1, "first_seen": 100.0, "last_seen": 200.0,
     }])
     assert WorldMap.MAP_STYLE_URL == "https://tiles.openfreemap.org/styles/dark"
     assert len(widget._features) == 1
@@ -64,6 +64,8 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert "endpoint-glow" in html
     assert "swarm-popup" in html
     assert "Upload speed" in html
+    assert "First seen" in html
+    assert "map-legend" in html
     assert "maplibregl.Map" in html
     assert "cluster:true" in WorldMap._map_html()
     assert "getClusterExpansionZoom" in WorldMap._map_html()
