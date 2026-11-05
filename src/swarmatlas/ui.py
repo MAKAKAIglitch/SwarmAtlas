@@ -707,12 +707,12 @@ window.maplibregl=maplibregl;
    }});
   }};
   map.addLayer({{
-   id:'endpoint-company-icons',type:'symbol',source:'swarm-endpoints',
+   id:'endpoint-company-icons',type:'symbol',source:'swarm-endpoints',minzoom:5.2,
    filter:['all',['!', ['has','point_count']],['!=',['get','company_icon'],'']],
    layout:{{
-    'icon-image':['get','company_icon'],'icon-size':0.72,
-    'icon-anchor':'center','icon-allow-overlap':true,'icon-ignore-placement':true,
-    'icon-padding':1
+    'icon-image':['get','company_icon'],'icon-size':0.68,
+    'icon-anchor':'center','icon-allow-overlap':false,'icon-ignore-placement':false,
+    'icon-padding':3
    }}
   }});
   window.ensureCompanyIcons(window.pendingSwarmFeatures||[]);
