@@ -28,3 +28,15 @@ pub(crate) fn list_network_interfaces() -> Result<Vec<NetworkInterface>, String>
 pub(crate) fn resolve_process_names(_process_ids: &[u32]) -> Result<Vec<ProcessName>, String> {
     Err("Native process lookup currently supports Windows only".to_owned())
 }
+
+pub(crate) type TraceProbe = (Option<String>, Option<f64>, bool, String);
+
+pub(crate) fn traceroute_probe(
+    _target: &str,
+    _method: &str,
+    _ttl: u32,
+    _timeout_ms: u64,
+    _port: u16,
+) -> Result<TraceProbe, String> {
+    Err("Native ICMP/UDP/TCP traceroute currently supports Windows only".to_owned())
+}
