@@ -13,7 +13,6 @@ from PySide6.QtCore import QThread, Signal
 from .config import AppConfig, database_path
 from .geoip import GeoLocator
 from .geoip_data import ensure_default_geoip_database
-from .map_data import load_world_boundary_paths
 from .native import (
     NATIVE_AVAILABLE,
     NATIVE_CAPABILITIES,
@@ -502,7 +501,6 @@ class NetworkWorker(QThread):
     snapshot_ready = Signal(dict)
     status_changed = Signal(str)
     startup_ready = Signal(str)
-    map_data_ready = Signal(object, object)
 
     def __init__(self, config: AppConfig):
         super().__init__()
@@ -624,31 +622,6 @@ class NetworkWorker(QThread):
             self.status_changed.emit(locator.status)
             if not interface:
                 self.status_changed.emit("No active network interface found")
-
-            # Download and parse Natural Earth polygons off the GUI thread.
-            # Once cached, the map works offline on every later launch.
-            try:
-                map_started = time.perf_counter()
-                # Stream one shapefile ring at a time into simplified Qt paths.
-                # This avoids retaining all raw Natural Earth coordinates before
-                # allocating the renderable geometry.
-                country_path, region_path = load_world_boundary_paths(
-                    progress=lambda message: self.status_changed.emit(message)
-                )
-                _LOGGER.info(
-                    "Prepared map geometry off-thread in %.1f ms "
-                    "(%d country, %d region path elements)",
-                    (time.perf_counter() - map_started) * 1000.0,
-                    country_path.elementCount(),
-                    region_path.elementCount(),
-                )
-                self.map_data_ready.emit(country_path, region_path)
-                self.status_changed.emit("Country and region map ready")
-            except Exception as exc:
-                _LOGGER.exception("Could not load offline Natural Earth country/region boundaries")
-                self.status_changed.emit(
-                    f"Offline country/region map unavailable: {type(exc).__name__}: {exc}"
-                )
 
             previous_time = time.monotonic()
             last_interface_check = previous_time
