@@ -33,7 +33,7 @@ echo.
 set /p "SWARM_IFINDEX=Enter the Interface Index to repair: "
 if not defined SWARM_IFINDEX goto :invalid_adapter
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){exit 2}; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; if($null -eq $a){exit 3}; Write-Output ('Selected: ' + $a.Name + ' | ' + $a.InterfaceDescription + ' | Status: ' + $a.Status)" 
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){exit 2}; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; if($null -eq $a){exit 3}; Write-Output ('Selected: ' + $a.Name + ' | ' + $a.InterfaceDescription + ' | Status: ' + $a.Status) } catch { Write-Error $_; exit 3 }" 
 if errorlevel 1 goto :invalid_adapter
 
 echo.
@@ -104,7 +104,7 @@ if errorlevel 1 (
 )
 
 echo [2/4] Restarting selected adapter...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){throw 'Invalid interface index'}; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; Write-Output ('Restarting ' + $a.Name); Restart-NetAdapter -InputObject $a -Confirm:$false -ErrorAction Stop; Start-Sleep -Seconds 3; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; Write-Output ('Adapter status after restart: ' + $a.Status)" >>"%LOG_FILE%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){throw 'Invalid interface index'}; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; Write-Output ('Restarting ' + $a.Name); Restart-NetAdapter -InputObject $a -Confirm:$false -ErrorAction Stop; Start-Sleep -Seconds 3; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; Write-Output ('Adapter status after restart: ' + $a.Status) } catch { Write-Error $_; exit 1 }" >>"%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo ERROR: Adapter restart failed. See log.
     goto :repair_failed
@@ -112,7 +112,7 @@ if errorlevel 1 (
 echo Adapter restart command completed.
 
 echo [3/4] Checking DHCP configuration...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){throw 'Invalid interface index'}; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; $dhcp=@(Get-NetIPInterface -InterfaceIndex $i -ErrorAction SilentlyContinue | Where-Object {$_.Dhcp -eq 'Enabled'}); if($dhcp.Count -gt 0){ Write-Output ('DHCP enabled; renewing lease for adapter ' + $a.Name); & ipconfig.exe /renew $a.Name; if($LASTEXITCODE -ne 0){exit $LASTEXITCODE} } else { Write-Output 'DHCP is disabled for this adapter; preserving its static configuration.' }" >>"%LOG_FILE%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){throw 'Invalid interface index'}; $a=Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop; $dhcp=@(Get-NetIPInterface -InterfaceIndex $i -ErrorAction SilentlyContinue | Where-Object {$_.Dhcp -eq 'Enabled'}); if($dhcp.Count -gt 0){ Write-Output ('DHCP enabled; renewing lease for adapter ' + $a.Name); & ipconfig.exe /renew $a.Name; if($LASTEXITCODE -ne 0){exit $LASTEXITCODE} } else { Write-Output 'DHCP is disabled for this adapter; preserving its static configuration.' } } catch { Write-Error $_; exit 1 }" >>"%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo WARNING: DHCP renewal returned an error or the adapter has no DHCP lease.
     echo Review the log before trying another repair.
@@ -148,7 +148,7 @@ echo Winsock reset command completed. Restart Windows when convenient.
 
 echo.
 echo Verifying adapter state...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){throw 'Invalid interface index'}; Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop | Format-List Name,InterfaceDescription,Status,LinkSpeed,ifIndex" >>"%LOG_FILE%" 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $i=0; if(-not [int]::TryParse($env:SWARM_IFINDEX,[ref]$i)){throw 'Invalid interface index'}; Get-NetAdapter -InterfaceIndex $i -ErrorAction Stop | Format-List Name,InterfaceDescription,Status,LinkSpeed,ifIndex } catch { Write-Error $_; exit 1 }" >>"%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo WARNING: Could not read the final adapter state. See log.
 ) else (
