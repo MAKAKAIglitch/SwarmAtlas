@@ -344,7 +344,28 @@ def test_destination_summary_aggregates_tcp_traffic_by_application(tmp_path: Pat
         timestamp=101.0,
     )
 
-    applications = store.destination_summary(101.0)["top_applications"]
+    # A second sample derives live directional rates from the Windows TCP ESTATS counters.
+    store.record_tcp_flow_counters(
+        [
+            {
+                "ip": "8.8.8.8", "port": 443, "process_id": 101,
+                "local_port": 51001, "upload_counter": 1600, "download_counter": 5000,
+            },
+        ],
+        timestamp=111.0,
+    )
+    summary = store.destination_summary(111.0)
+    endpoint = next(
+        item for item in summary["active_endpoints"]
+        if item["ip"] == "8.8.8.8" and item["process_id"] == 101
+    )
+    assert endpoint["traffic_upload_bytes"] == 1600
+    assert endpoint["traffic_download_bytes"] == 5000
+    assert endpoint["traffic_upload_bps"] == 60.0
+    assert endpoint["traffic_download_bps"] == 100.0
+    assert endpoint["traffic_flow_count"] == 1
+
+    applications = summary["top_applications"]
     assert applications[0]["process_id"] == 101
     assert applications[0]["process_name"] == "browser.exe"
     assert applications[0]["upload_bytes"] == 1500
