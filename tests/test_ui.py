@@ -13,7 +13,8 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from swarmatlas import config
 from swarmatlas.theme import get_palette
-from swarmatlas.ui import GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, SmoothScrollArea, TrafficChart, WorldMap
+from swarmatlas.i18n import tr
+from swarmatlas.ui import EndpointPingBridge, GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, SmoothScrollArea, TrafficChart, WorldMap
 
 
 class _FakeWebEngineSettings:
@@ -23,6 +24,9 @@ class _FakeWebEngineSettings:
 
 class _FakeWebEnginePage:
     def runJavaScript(self, *_args) -> None:
+        pass
+
+    def setWebChannel(self, *_args) -> None:
         pass
 
 
@@ -349,3 +353,28 @@ def test_main_window_skips_table_rebuild_for_reused_worker_lists(
     window.close()
     window.deleteLater()
     app.processEvents()
+
+
+
+def test_world_map_localizes_estats_requirement_and_requests_ping_only_for_open_popup() -> None:
+    html = WorldMap._map_html()
+    assert "window.swarmAtlasPingBridge.ping(p.ip)" in html
+    assert "data-ping-ip" in html
+    assert tr("tcp_estats_requirement", "ru").startswith("Для сбора этих счётчиков")
+    assert "required access permissions" in tr("tcp_estats_requirement", "en")
+
+
+def test_cluster_traffic_intensity_uses_aggregated_rates_and_keeps_clustering() -> None:
+    html = WorldMap._map_html()
+    assert "clusterProperties" in html
+    assert "traffic_bps:['+', ['get','traffic_bps']]" in html
+    assert "['interpolate',['exponential',0.35],['get','traffic_bps']" in html
+    assert "cluster:true,clusterRadius:48,clusterMaxZoom:5" in html
+
+
+def test_ping_bridge_rejects_invalid_ip_without_spawning_process() -> None:
+    bridge = EndpointPingBridge()
+    results = []
+    bridge.pingResult.connect(lambda ip, result: results.append((ip, result)))
+    bridge.ping("not-an-ip")
+    assert results == [("not-an-ip", "Некорректный IP-адрес")]
