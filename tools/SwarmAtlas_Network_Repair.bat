@@ -28,6 +28,7 @@ echo The selected adapter will be temporarily disconnected.
 echo.
 echo Available network adapters:
 echo.
+set "SWARM_IFINDEX="
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue | Sort-Object ifIndex | Format-Table -AutoSize ifIndex,Name,Status,InterfaceDescription,LinkSpeed"
 echo.
 set /p "SWARM_IFINDEX=Enter the Interface Index to repair: "
@@ -88,6 +89,7 @@ echo The adapter may briefly lose connectivity.
 echo If you are connected remotely through this adapter, the session may drop.
 echo A static IP configuration is not intentionally removed by this script.
 echo.
+set "SWARM_CONFIRM="
 set /p "SWARM_CONFIRM=Type YES to begin the selected repair: "
 powershell -NoProfile -ExecutionPolicy Bypass -Command "if($env:SWARM_CONFIRM -ieq 'YES'){exit 0}else{exit 1}"
 if errorlevel 1 goto :cancelled
@@ -133,6 +135,7 @@ echo.
 echo Winsock reset affects the entire Windows networking stack.
 echo VPN clients, endpoint security software and other network tools may
 echo need repair afterwards. A Windows restart may be required.
+set "SWARM_WINSOCK_CONFIRM="
 set /p "SWARM_WINSOCK_CONFIRM=Type RESET to also reset Winsock, or press Enter to skip: "
 powershell -NoProfile -ExecutionPolicy Bypass -Command "if($env:SWARM_WINSOCK_CONFIRM -ieq 'RESET'){exit 0}else{exit 1}"
 if not errorlevel 1 goto :winsock_reset
