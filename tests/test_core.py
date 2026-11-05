@@ -295,3 +295,62 @@ def test_destination_cap_count_is_not_repeated_on_every_scan(tmp_path: Path) -> 
         for statement in statements
     )
     store.close()
+
+
+
+def test_destination_summary_aggregates_tcp_traffic_by_application(tmp_path: Path) -> None:
+    store = Store(tmp_path / "application-traffic.sqlite3")
+    store.update_destinations(
+        [
+            {
+                "ip": "8.8.8.8",
+                "port": 443,
+                "protocol": "TCP",
+                "process_id": 101,
+                "process_name": "browser.exe",
+            },
+            {
+                "ip": "1.1.1.1",
+                "port": 443,
+                "protocol": "TCP",
+                "process_id": 101,
+                "process_name": "browser.exe",
+            },
+            {
+                "ip": "9.9.9.9",
+                "port": 443,
+                "protocol": "TCP",
+                "process_id": 202,
+                "process_name": "chat.exe",
+            },
+        ],
+        timestamp=100.0,
+    )
+    store.record_tcp_flow_counters(
+        [
+            {
+                "ip": "8.8.8.8", "port": 443, "process_id": 101,
+                "local_port": 51001, "upload_counter": 1000, "download_counter": 4000,
+            },
+            {
+                "ip": "1.1.1.1", "port": 443, "process_id": 101,
+                "local_port": 51002, "upload_counter": 500, "download_counter": 2500,
+            },
+            {
+                "ip": "9.9.9.9", "port": 443, "process_id": 202,
+                "local_port": 51003, "upload_counter": 300, "download_counter": 700,
+            },
+        ],
+        timestamp=101.0,
+    )
+
+    applications = store.destination_summary(101.0)["top_applications"]
+    assert applications[0]["process_id"] == 101
+    assert applications[0]["process_name"] == "browser.exe"
+    assert applications[0]["upload_bytes"] == 1500
+    assert applications[0]["download_bytes"] == 6500
+    assert applications[0]["peer_count"] == 2
+    assert applications[1]["process_id"] == 202
+    assert applications[1]["upload_bytes"] == 300
+    assert applications[1]["download_bytes"] == 700
+    store.close()
