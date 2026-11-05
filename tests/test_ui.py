@@ -381,3 +381,45 @@ def test_ping_bridge_rejects_invalid_ip_without_spawning_process() -> None:
     bridge.pingResult.connect(lambda ip, result: results.append((ip, result)))
     bridge.ping("not-an-ip")
     assert results == [("not-an-ip", "Некорректный IP-адрес")]
+
+
+def test_endpoint_filter_matches_ip_process_provider_location_and_port(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    endpoints = [
+        {
+            "ip": "8.8.8.8", "port": 443, "local_port": 51000,
+            "protocol": "TCP", "process_id": 1234, "process_name": "browser.exe",
+            "asn": 15169, "organization": "Google LLC", "city": "Mountain View",
+            "region": "California", "country": "United States",
+        },
+        {
+            "ip": "1.1.1.1", "port": 53, "local_port": 53000,
+            "protocol": "UDP", "process_id": 4321, "process_name": "dns.exe",
+            "asn": 13335, "organization": "Cloudflare", "city": "Sydney",
+            "region": "New South Wales", "country": "Australia",
+        },
+    ]
+    window._fill_endpoints(endpoints)
+    assert window.endpoint_table.rowCount() == 2
+    window.endpoint_search.setText("cloudflare")
+    assert window.endpoint_table.rowCount() == 1
+    assert window.endpoint_table.item(0, 0).text() == "1.1.1.1"
+    window.endpoint_search.setText("51000")
+    assert window.endpoint_table.rowCount() == 1
+    assert window.endpoint_table.item(0, 0).text() == "8.8.8.8"
+    window.endpoint_search.clear()
+    assert window.endpoint_table.rowCount() == 2
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_csv_export_writer_uses_utf8_bom_and_preserves_values(tmp_path: Path) -> None:
+    path = tmp_path / "export.csv"
+    MainWindow._write_csv(str(path), ["ip", "location"], [["8.8.8.8", "Москва"]])
+    content = path.read_bytes()
+    assert content.startswith(b"\\xef\\xbb\\xbf")
+    assert "Москва".encode("utf-8") in content
+    assert b"8.8.8.8" in content
