@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import ipaddress
 import json
 import logging
@@ -1439,6 +1440,10 @@ class MainWindow(QMainWindow):
             self.history_combo.addItem(self.t(label_key), seconds)
         self.history_combo.currentIndexChanged.connect(self.change_history_range)
         chart_title.addWidget(self.history_combo)
+        self.export_history_button = QPushButton(self.t("export_csv"))
+        self.export_history_button.setObjectName("quiet")
+        self.export_history_button.clicked.connect(self.export_history_csv)
+        chart_title.addWidget(self.export_history_button)
         chart_layout.addLayout(chart_title)
         self.chart = TrafficChart(self.palette, self.t("history_empty"))
         chart_layout.addWidget(self.chart)
@@ -1448,8 +1453,21 @@ class MainWindow(QMainWindow):
         peers_card = card()
         peers_layout = QVBoxLayout(peers_card)
         peers_layout.setContentsMargins(18, 16, 18, 12)
+        peers_heading = QHBoxLayout()
         self.endpoints_title = make_label(self.t("recent_destinations"), 13, self.palette["text"], 600)
-        peers_layout.addWidget(self.endpoints_title)
+        peers_heading.addWidget(self.endpoints_title)
+        peers_heading.addStretch(1)
+        self.endpoint_search = QLineEdit()
+        self.endpoint_search.setPlaceholderText(self.t("search_destinations"))
+        self.endpoint_search.setClearButtonEnabled(True)
+        self.endpoint_search.setMaximumWidth(230)
+        self.endpoint_search.textChanged.connect(self._apply_endpoint_filter)
+        peers_heading.addWidget(self.endpoint_search)
+        self.export_endpoints_button = QPushButton(self.t("export_csv"))
+        self.export_endpoints_button.setObjectName("quiet")
+        self.export_endpoints_button.clicked.connect(self.export_endpoints_csv)
+        peers_heading.addWidget(self.export_endpoints_button)
+        peers_layout.addLayout(peers_heading)
         self.endpoint_table = QTableWidget(0, 5)
         self.endpoint_table.setHorizontalHeaderLabels([
             self.t("ip_address"), self.t("process"), self.t("provider"),
@@ -1829,8 +1847,14 @@ class MainWindow(QMainWindow):
     def _fill_endpoints(self, endpoints: list[dict[str, Any]]) -> None:
         if endpoints is getattr(self, "_endpoint_table_source", None):
             return
+        self._endpoint_table_source = endpoints
+        self._apply_endpoint_filter()
+
+    def _apply_endpoint_filter(self, *_args: Any) -> None:
+        endpoints = getattr(self, "_endpoint_table_source", None) or []
+        query = self.endpoint_search.text().strip().casefold() if hasattr(self, "endpoint_search") else ""
         rows: list[list[str]] = []
-        for item in endpoints[:10]:
+        for item in endpoints[:500]:
             location = ", ".join(
                 str(value) for value in (item.get("city"), item.get("region"), item.get("country"))
                 if value
@@ -1851,15 +1875,80 @@ class MainWindow(QMainWindow):
                 process = f"PID {process_id}"
             else:
                 process = "—"
+            searchable = " ".join(str(item.get(key) or "") for key in (
+                "ip", "protocol", "port", "local_port", "process_id",
+                "process_name", "asn", "organization", "isp", "city",
+                "region", "country", "connection_state",
+            )).casefold()
+            if query and query not in searchable and query not in provider.casefold() and query not in location.casefold():
+                continue
             rows.append([
-                str(item["ip"]),
+                str(item.get("ip") or "—"),
                 process,
                 provider,
                 location,
-                str(item["protocol"]),
+                str(item.get("protocol") or "—"),
             ])
         update_table(self.endpoint_table, rows)
-        self._endpoint_table_source = endpoints
+
+    @staticmethod
+    def _write_csv(path: str, headers: list[str], rows: list[list[Any]]) -> None:
+        with open(path, "w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(headers)
+            writer.writerows(rows)
+
+    def export_endpoints_csv(self) -> None:
+        endpoints = self._last_snapshot.get("active_endpoints", [])
+        if not endpoints:
+            self.statusBar().showMessage(self.t("export_no_data"))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.t("export_endpoints"), "swarmatlas-endpoints.csv", "CSV (*.csv)"
+        )
+        if not path:
+            return
+        headers = [
+            "ip", "protocol", "remote_port", "local_port", "process_id",
+            "process_name", "state", "country", "region", "city", "asn",
+            "organization", "isp", "latitude", "longitude", "first_seen",
+            "last_seen", "upload_bytes", "download_bytes", "upload_bytes_per_sec",
+            "download_bytes_per_sec", "tracked_flows",
+        ]
+        keys = [
+            "ip", "protocol", "port", "local_port", "process_id",
+            "process_name", "connection_state", "country", "region", "city",
+            "asn", "organization", "isp", "latitude", "longitude", "first_seen",
+            "last_seen", "traffic_upload_bytes", "traffic_download_bytes",
+            "traffic_upload_bps", "traffic_download_bps", "traffic_flow_count",
+        ]
+        try:
+            self._write_csv(path, headers, [[item.get(key, "") for key in keys] for item in endpoints])
+        except OSError as exc:
+            QMessageBox.warning(self, self.t("export_endpoints"), str(exc))
+            return
+        self.statusBar().showMessage(self.t("export_saved", path=path))
+
+    def export_history_csv(self) -> None:
+        samples = self._last_snapshot.get("samples", [])
+        if not samples:
+            self.statusBar().showMessage(self.t("export_no_data"))
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.t("export_history"), "swarmatlas-traffic-history.csv", "CSV (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            self._write_csv(
+                path,
+                ["timestamp", "upload_bytes_per_sec", "download_bytes_per_sec"],
+                [[item.get("timestamp", ""), item.get("upload_bps", 0), item.get("download_bps", 0)] for item in samples],
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, self.t("export_history"), str(exc))
+            return
+        self.statusBar().showMessage(self.t("export_saved", path=path))
 
     def _fill_applications(
         self, applications: list[dict[str, Any]], flow_status: str
