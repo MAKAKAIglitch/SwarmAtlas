@@ -9,7 +9,6 @@ if errorlevel 1 (
     echo.
     echo SwarmAtlas Network Repair needs Administrator privileges.
     echo Windows will ask for confirmation through UAC.
-    for %%I in ("%~f0") do set "SWARM_BAT_SHORT=%%~sI"
     powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath $env:ComSpec -ArgumentList ('/c ""' + $env:SWARM_BAT_PATH + '""') -Verb RunAs -Wait"
     exit /b
 )
@@ -122,13 +121,24 @@ if errorlevel 1 (
 )
 
 if "%MODE%"=="2" (
-    echo [4/4] Resetting Winsock catalog...
-    netsh winsock reset >>"%LOG_FILE%" 2>&1
-    if errorlevel 1 (
-        echo ERROR: Winsock reset returned an error. See log.
-        goto :repair_failed
+    echo.
+    echo Winsock reset affects the entire Windows networking stack.
+    echo VPN clients, endpoint security software and other network tools may
+    echo need repair afterwards. A Windows restart may be required.
+    set /p "WINSOCK_CONFIRM=Type RESET to also reset Winsock, or press Enter to skip: "
+    if /i "%WINSOCK_CONFIRM%"=="RESET" (
+        echo [4/4] Resetting Winsock catalog...
+        echo Winsock reset confirmed.>>"%LOG_FILE%"
+        netsh winsock reset >>"%LOG_FILE%" 2>&1
+        if errorlevel 1 (
+            echo ERROR: Winsock reset returned an error. See log.
+            goto :repair_failed
+        )
+        echo Winsock reset command completed. Restart Windows when convenient.
+    ) else (
+        echo Winsock reset skipped. Standard adapter repair remains complete.
+        echo Winsock reset skipped by user.>>"%LOG_FILE%"
     )
-    echo Winsock reset command completed. Restart Windows when convenient.
 )
 
 echo.
