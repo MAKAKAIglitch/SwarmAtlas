@@ -140,6 +140,7 @@ class _TracerouteWorker(QThread):
         timeout_ms: int,
         probes: int,
         port: int,
+        family: int,
         parent=None,
     ):
         super().__init__(parent)
@@ -149,6 +150,7 @@ class _TracerouteWorker(QThread):
         self.timeout_ms = timeout_ms
         self.probes = probes
         self.port = port
+        self.family = family
         self._cancelled = threading.Event()
 
     def cancel(self) -> None:
@@ -167,7 +169,7 @@ class _TracerouteWorker(QThread):
                     if self._cancelled.is_set():
                         break
                     result = native_traceroute_probe(
-                        self.target, self.method, ttl, self.timeout_ms, self.port
+                        self.target, self.method, ttl, self.timeout_ms, self.port, self.family
                     )
                     if result["address"] and not address:
                         address = result["address"]
@@ -488,6 +490,7 @@ class DiagnosticsDialog(QDialog):
             self.trace_timeout.value(),
             self.trace_probes.value(),
             self.trace_port.value(),
+            int(self.trace_family.currentData()),
             self,
         )
         worker.hop_ready.connect(self._add_native_trace_hop)
