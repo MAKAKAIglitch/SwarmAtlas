@@ -4,9 +4,10 @@ import ipaddress
 import re
 import socket
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from PySide6.QtCore import QProcess, QThread, QTimer, Signal
+from PySide6.QtCore import QProcess, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
