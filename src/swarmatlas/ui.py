@@ -606,8 +606,8 @@ window.maplibregl=maplibregl;
     row('Download speed',rate(p.traffic_download_bps),true);
     row('Tracked flows',p.traffic_flow_count||0);
    }}else{{
-    row('Traffic counters','Not available');
-    row('Enable','Application traffic statistics in settings');
+    row('Traffic counters','Not collected');
+    row('Requirement','Windows TCP ESTATS support and access rights');
    }}
    new maplibregl.Popup({{closeButton:true,closeOnClick:true,offset:12,maxWidth:'350px'}})
     .setLngLat(event.lngLat).setDOMContent(box).addTo(map);
