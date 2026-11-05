@@ -100,7 +100,7 @@ fn project_and_simplify_rings(
 
 /// Perform one TTL-limited native traceroute probe (ICMP, UDP, or TCP).
 #[pyfunction]
-#[pyo3(signature = (target, method, ttl, timeout_ms=1000, port=443))]
+#[pyo3(signature = (target, method, ttl, timeout_ms=1000, port=443, family=0))]
 fn traceroute_probe(
     py: Python<'_>,
     target: String,
@@ -108,6 +108,7 @@ fn traceroute_probe(
     ttl: u32,
     timeout_ms: u64,
     port: u16,
+    family: u8,
 ) -> PyResult<platform::TraceProbe> {
     if target.trim().is_empty() || target.len() > 253 {
         return Err(PyValueError::new_err("target must be a hostname or IP address"));
@@ -121,11 +122,14 @@ fn traceroute_probe(
     if port == 0 {
         return Err(PyValueError::new_err("port must be between 1 and 65535"));
     }
+    if !matches!(family, 0 | 4 | 6) {
+        return Err(PyValueError::new_err("family must be 0 (auto), 4 (IPv4), or 6 (IPv6)"));
+    }
     let method = method.to_ascii_lowercase();
     if !matches!(method.as_str(), "icmp" | "udp" | "tcp") {
         return Err(PyValueError::new_err("method must be icmp, udp, or tcp"));
     }
-    py.detach(move || read_traceroute_probe(&target, &method, ttl, timeout_ms, port))
+    py.detach(move || read_traceroute_probe(&target, &method, ttl, timeout_ms, port, family))
         .map_err(PyRuntimeError::new_err)
 }
 
