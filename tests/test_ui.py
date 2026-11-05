@@ -60,6 +60,9 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert properties["traffic_download_bps"] == 2048.0
     assert properties["traffic_bps"] == 2560.0
     assert properties["traffic_known"] == 1
+    endpoint_id = properties["endpoint_id"]
+    assert widget._details[endpoint_id]["traffic_upload_bytes"] == 4096
+    assert widget._details[endpoint_id]["traffic_download_bytes"] == 8192
     html = WorldMap._map_html()
     assert "endpoint-glow" in html
     assert "swarm-popup" in html
@@ -76,6 +79,35 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert widget._zoom == 1.15
     widget.deleteLater()
     app.processEvents()
+
+
+def test_world_map_refreshes_popup_details_without_rebuilding_map_geometry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("swarmatlas.ui.app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    widget = WorldMap(get_palette("dark"), "No map data")
+    endpoint = {
+        "ip": "8.8.8.8", "latitude": 37.4, "longitude": -122.0,
+        "country": "United States", "region": "California", "city": "Mountain View",
+        "process_id": 4321, "process_name": "browser.exe", "protocol": "TCP",
+        "port": 443, "local_port": 51000, "connection_state": "ESTABLISHED",
+        "traffic_upload_bytes": 4096, "traffic_download_bytes": 8192,
+        "traffic_upload_bps": 512.0, "traffic_download_bps": 2048.0,
+        "traffic_flow_count": 1, "first_seen": 100.0, "last_seen": 200.0,
+    }
+    widget.set_locations([endpoint])
+    features = widget._features
+    endpoint["traffic_upload_bytes"] = 8192
+    endpoint["last_seen"] = 205.0
+    widget.set_locations([dict(endpoint)])
+    assert widget._features is features
+    endpoint_id = features[0]["properties"]["endpoint_id"]
+    assert widget._details[endpoint_id]["traffic_upload_bytes"] == 8192
+    assert widget._details[endpoint_id]["last_seen"] == 205.0
+    widget.deleteLater()
+    app.processEvents()
+
 
 
 def test_world_map_viewport_is_rectangular_not_forced_to_square(tmp_path: Path, monkeypatch) -> None:
