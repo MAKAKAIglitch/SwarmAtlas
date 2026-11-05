@@ -571,7 +571,7 @@ window.maplibregl=maplibregl;
     line.append(key,val);box.append(line);
    }};
    section('Connection');
-   row('Application',p.process_name||'Unknown process');
+   row('Application',p.process_name||(p.process_id?'PID '+p.process_id:'Unknown process'));
    row('PID',p.process_id||'—');
    row('Protocol',p.protocol||'—');
    row('Remote port',p.port||'—');
