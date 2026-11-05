@@ -1,6 +1,6 @@
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::io::{Error, ErrorKind, Result};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 pub(crate) type TraceProbe = (Option<String>, Option<f64>, bool, String);
@@ -140,18 +140,12 @@ fn select_ipv6_source(target: SocketAddr) -> Result<Ipv6Addr> {
     }
 }
 
-fn icmp_kind(packet: &[u8], ipv6: bool) -> Option<(u8, u8)> {
-    if packet.is_empty() {
-        return None;
-    }
+fn icmp_offset(packet: &[u8], ipv6: bool) -> Option<usize> {
+    let first = *packet.first()?;
     let offset = if ipv6 {
-        if packet[0] >> 4 == 6 {
-            40
-        } else {
-            0
-        }
-    } else if packet[0] >> 4 == 4 {
-        let header_len = ((packet[0] & 0x0f) as usize) * 4;
+        if first >> 4 == 6 { 40 } else { 0 }
+    } else if first >> 4 == 4 {
+        let header_len = ((first & 0x0f) as usize) * 4;
         if header_len < 20 {
             return None;
         }
@@ -159,10 +153,64 @@ fn icmp_kind(packet: &[u8], ipv6: bool) -> Option<(u8, u8)> {
     } else {
         0
     };
-    if packet.len() < offset + 2 {
-        return None;
-    }
+    (packet.len() >= offset + 2).then_some(offset)
+}
+
+fn icmp_kind(packet: &[u8], ipv6: bool) -> Option<(u8, u8)> {
+    let offset = icmp_offset(packet, ipv6)?;
     Some((packet[offset], packet[offset + 1]))
+}
+
+fn icmp_reply_matches_target(
+    packet: &[u8],
+    ipv6: bool,
+    source: IpAddr,
+    target: IpAddr,
+) -> bool {
+    let Some(offset) = icmp_offset(packet, ipv6) else {
+        return false;
+    };
+    let Some((kind, _)) = icmp_kind(packet, ipv6) else {
+        return false;
+    };
+
+    if (!ipv6 && kind == 0) || (ipv6 && kind == 129) {
+        return source == target;
+    }
+
+    let is_error = (!ipv6 && matches!(kind, 3 | 11)) || (ipv6 && matches!(kind, 1 | 3));
+    if !is_error {
+        return false;
+    }
+
+    let inner = offset + 8;
+    match target {
+        IpAddr::V4(expected) if !ipv6 => {
+            if packet.len() < inner + 20 || packet[inner] >> 4 != 4 {
+                return false;
+            }
+            let header_len = ((packet[inner] & 0x0f) as usize) * 4;
+            if header_len < 20 || packet.len() < inner + header_len {
+                return false;
+            }
+            let actual = Ipv4Addr::new(
+                packet[inner + 16],
+                packet[inner + 17],
+                packet[inner + 18],
+                packet[inner + 19],
+            );
+            actual == expected
+        }
+        IpAddr::V6(expected) if ipv6 => {
+            if packet.len() < inner + 40 || packet[inner] >> 4 != 6 {
+                return false;
+            }
+            let mut octets = [0_u8; 16];
+            octets.copy_from_slice(&packet[inner + 24..inner + 40]);
+            Ipv6Addr::from(octets) == expected
+        }
+        _ => false,
+    }
 }
 
 fn is_relevant_icmp(packet: &[u8], ipv6: bool) -> bool {
@@ -214,7 +262,9 @@ fn receive_reply(
                 };
                 let bytes =
                     unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), length) };
-                if !is_relevant_icmp(bytes, ipv6) {
+                if !is_relevant_icmp(bytes, ipv6)
+                    || !icmp_reply_matches_target(bytes, ipv6, source.ip(), target.ip())
+                {
                     continue;
                 }
                 let reached = is_destination_reply(bytes, ipv6, source.ip(), target.ip());
@@ -361,7 +411,7 @@ pub(crate) fn traceroute_probe(
 
 #[cfg(test)]
 mod tests {
-    use super::{checksum, icmp_kind, icmpv6_checksum, is_destination_reply};
+    use super::{checksum, icmp_kind, icmp_reply_matches_target, icmpv6_checksum, is_destination_reply};
 
     #[test]
     fn ipv4_echo_checksum_is_valid() {
@@ -388,6 +438,27 @@ mod tests {
             false,
             "192.0.2.1".parse().unwrap(),
             "192.0.2.1".parse().unwrap()
+        ));
+    }
+
+    #[test]
+    fn ignores_time_exceeded_for_another_destination() {
+        let mut packet = vec![0x45; 20];
+        packet.extend_from_slice(&[11, 0, 0, 0, 0, 0, 0, 0]);
+        let mut inner = vec![0x45; 20];
+        inner[16..20].copy_from_slice(&[192, 0, 2, 10]);
+        packet.extend_from_slice(&inner);
+        assert!(!icmp_reply_matches_target(
+            &packet,
+            false,
+            "198.51.100.1".parse().unwrap(),
+            "192.0.2.99".parse().unwrap()
+        ));
+        assert!(icmp_reply_matches_target(
+            &packet,
+            false,
+            "198.51.100.1".parse().unwrap(),
+            "192.0.2.10".parse().unwrap()
         ));
     }
 
