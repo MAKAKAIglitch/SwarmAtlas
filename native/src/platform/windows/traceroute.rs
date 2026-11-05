@@ -10,15 +10,18 @@ const MIN_TIMEOUT_MS: u64 = 100;
 const MAX_TTL: u32 = 64;
 const UDP_BASE_PORT: u16 = 33434;
 
-fn resolve_target(target: &str, port: u16) -> Result<SocketAddr> {
+fn resolve_target(target: &str, port: u16, family: u8) -> Result<SocketAddr> {
     let target = target.trim();
     if target.is_empty() || target.len() > 253 || target.chars().any(char::is_whitespace) {
         return Err(Error::new(ErrorKind::InvalidInput, "Invalid traceroute target"));
     }
+    if family != 0 && family != 4 && family != 6 {
+        return Err(Error::new(ErrorKind::InvalidInput, "Address family must be 0, 4, or 6"));
+    }
     (target, port)
         .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| Error::new(ErrorKind::AddrNotAvailable, "Target did not resolve"))
+        .find(|address| family == 0 || (family == 4 && address.is_ipv4()) || (family == 6 && address.is_ipv6()))
+        .ok_or_else(|| Error::new(ErrorKind::AddrNotAvailable, "Target did not resolve to the selected address family"))
 }
 
 fn raw_socket(target: SocketAddr, timeout: Duration) -> Result<Socket> {
@@ -44,7 +47,7 @@ fn permission_hint(error: Error) -> Error {
 
 fn set_hop_limit(socket: &Socket, target: SocketAddr, ttl: u32) -> Result<()> {
     match target {
-        SocketAddr::V4(_) => socket.set_ttl(ttl),
+        SocketAddr::V4(_) => socket.set_ttl_v4(ttl),
         SocketAddr::V6(_) => socket.set_unicast_hops_v6(ttl),
     }
 }
@@ -245,6 +248,7 @@ pub(crate) fn traceroute_probe(
     ttl: u32,
     timeout_ms: u64,
     port: u16,
+    family: u8,
 ) -> Result<TraceProbe, String> {
     if !(1..=MAX_TTL).contains(&ttl) {
         return Err(format!("TTL must be between 1 and {MAX_TTL}"));
@@ -259,7 +263,7 @@ pub(crate) fn traceroute_probe(
         return Err("Traceroute method must be icmp, udp, or tcp".to_owned());
     }
 
-    let destination = resolve_target(target, port).map_err(|error| error.to_string())?;
+    let destination = resolve_target(target, port, family).map_err(|error| error.to_string())?;
     let timeout = Duration::from_millis(timeout_ms);
     let result = match method {
         "icmp" => icmp_probe(destination, ttl, timeout),
