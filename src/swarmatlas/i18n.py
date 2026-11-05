@@ -6,6 +6,7 @@ import re
 TRANSLATIONS: dict[str, dict[str, str]] = {
     "en": {
         "subtitle": "Network traffic atlas",
+        "tcp_estats_requirement": "Windows TCP ESTATS support and the required access permissions are needed to collect these counters.",
         "overview": "Overview",
         "destinations": "Destinations",
         "history": "History",
@@ -147,6 +148,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     },
     "ru": {
         "subtitle": "Атлас сетевого трафика",
+        "tcp_estats_requirement": "Для сбора этих счётчиков необходимы поддержка Windows TCP ESTATS и соответствующие права доступа.",
         "overview": "Обзор",
         "destinations": "Назначения",
         "history": "История",
