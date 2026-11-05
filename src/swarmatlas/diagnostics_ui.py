@@ -191,7 +191,7 @@ class _TracerouteWorker(QThread):
 
 
 class DiagnosticsDialog(QDialog):
-    """Cancellable Windows ping and ICMP traceroute tools."""
+    """Cancellable Windows ping and ICMP/UDP/TCP traceroute tools."""
 
     def __init__(self, language: str, parent=None):
         super().__init__(parent)
