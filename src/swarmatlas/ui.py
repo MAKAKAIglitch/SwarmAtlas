@@ -831,8 +831,8 @@ window.maplibregl=maplibregl;
         organization_matches = (
             ("cloudflare", ("Cloudflare", "cloudflare", "#F38020")),
             ("google", ("Google", "google", "#4285F4")),
-            ("microsoft", ("Microsoft", "microsoft", "#00A4EF")),
-            ("amazon", ("Amazon Web Services", "amazonaws", "#FF9900")),
+            ("microsoft", ("Microsoft", "", "#00A4EF")),
+            ("amazon", ("Amazon Web Services", "", "#FF9900")),
             ("meta", ("Meta", "meta", "#0866FF")),
             ("apple", ("Apple", "apple", "#A2AAAD")),
             ("netflix", ("Netflix", "netflix", "#E50914")),
@@ -841,8 +841,8 @@ window.maplibregl=maplibregl;
             ("digitalocean", ("DigitalOcean", "digitalocean", "#0080FF")),
             ("ovh", ("OVHcloud", "ovh", "#123F6D")),
             ("hetzner", ("Hetzner", "hetzner", "#D50C2D")),
-            ("oracle", ("Oracle Cloud", "oracle", "#F80000")),
-            ("ibm", ("IBM", "ibm", "#1261FE")),
+            ("oracle", ("Oracle Cloud", "", "#F80000")),
+            ("ibm", ("IBM", "", "#1261FE")),
         )
         for token, result in organization_matches:
             if token in normalized:
