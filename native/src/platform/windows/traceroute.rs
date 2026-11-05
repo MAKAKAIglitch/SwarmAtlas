@@ -13,15 +13,28 @@ const UDP_BASE_PORT: u16 = 33434;
 fn resolve_target(target: &str, port: u16, family: u8) -> Result<SocketAddr> {
     let target = target.trim();
     if target.is_empty() || target.len() > 253 || target.chars().any(char::is_whitespace) {
-        return Err(Error::new(ErrorKind::InvalidInput, "Invalid traceroute target"));
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Invalid traceroute target",
+        ));
     }
     if family != 0 && family != 4 && family != 6 {
-        return Err(Error::new(ErrorKind::InvalidInput, "Address family must be 0, 4, or 6"));
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Address family must be 0, 4, or 6",
+        ));
     }
     (target, port)
         .to_socket_addrs()?
-        .find(|address| family == 0 || (family == 4 && address.is_ipv4()) || (family == 6 && address.is_ipv6()))
-        .ok_or_else(|| Error::new(ErrorKind::AddrNotAvailable, "Target did not resolve to the selected address family"))
+        .find(|address| {
+            family == 0 || (family == 4 && address.is_ipv4()) || (family == 6 && address.is_ipv6())
+        })
+        .ok_or_else(|| {
+            Error::new(
+                ErrorKind::AddrNotAvailable,
+                "Target did not resolve to the selected address family",
+            )
+        })
 }
 
 fn raw_socket(target: SocketAddr, timeout: Duration) -> Result<Socket> {
@@ -95,10 +108,16 @@ fn icmp_kind(packet: &[u8], ipv6: bool) -> Option<(u8, u8)> {
         return None;
     }
     let offset = if ipv6 {
-        if packet[0] >> 4 == 6 { 40 } else { 0 }
+        if packet[0] >> 4 == 6 {
+            40
+        } else {
+            0
+        }
     } else if packet[0] >> 4 == 4 {
         let header_len = ((packet[0] & 0x0f) as usize) * 4;
-        if header_len < 20 { return None; }
+        if header_len < 20 {
+            return None;
+        }
         header_len
     } else {
         0
@@ -153,10 +172,11 @@ fn receive_reply(
         receiver.set_read_timeout(Some(remaining))?;
         match receiver.recv_from(&mut buffer) {
             Ok((length, from)) => {
-                let Some(source) = from.as_socket() else { continue; };
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), length)
+                let Some(source) = from.as_socket() else {
+                    continue;
                 };
+                let bytes =
+                    unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), length) };
                 if !is_relevant_icmp(bytes, ipv6) {
                     continue;
                 }
@@ -166,12 +186,15 @@ fn receive_reply(
                     Some(source.ip().to_string()),
                     Some(elapsed),
                     reached,
-                    if reached { "destination".to_owned() } else { "replied".to_owned() },
+                    if reached {
+                        "destination".to_owned()
+                    } else {
+                        "replied".to_owned()
+                    },
                 ));
             }
             Err(error)
-                if error.kind() == ErrorKind::WouldBlock
-                    || error.kind() == ErrorKind::TimedOut =>
+                if error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut =>
             {
                 return Ok((None, None, false, "timeout".to_owned()));
             }
@@ -183,7 +206,11 @@ fn receive_reply(
 fn udp_probe(target: SocketAddr, ttl: u32, timeout: Duration) -> Result<TraceProbe> {
     let receiver = raw_socket(target, timeout).map_err(permission_hint)?;
     let sender = Socket::new(
-        if target.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 },
+        if target.is_ipv4() {
+            Domain::IPV4
+        } else {
+            Domain::IPV6
+        },
         Type::DGRAM,
         Some(Protocol::UDP),
     )?;
@@ -215,7 +242,9 @@ fn tcp_probe(target: SocketAddr, ttl: u32, timeout: Duration, port: u16) -> Resu
     let connect_elapsed = started.elapsed().as_secs_f64() * 1000.0;
 
     if connect_result.is_ok()
-        || connect_result.as_ref().is_err_and(|error| error.kind() == ErrorKind::ConnectionRefused)
+        || connect_result
+            .as_ref()
+            .is_err_and(|error| error.kind() == ErrorKind::ConnectionRefused)
     {
         return Ok((
             Some(target.ip().to_string()),
@@ -254,7 +283,9 @@ pub(crate) fn traceroute_probe(
         return Err(format!("TTL must be between 1 and {MAX_TTL}"));
     }
     if !(MIN_TIMEOUT_MS..=MAX_TIMEOUT_MS).contains(&timeout_ms) {
-        return Err(format!("Timeout must be between {MIN_TIMEOUT_MS} and {MAX_TIMEOUT_MS} ms"));
+        return Err(format!(
+            "Timeout must be between {MIN_TIMEOUT_MS} and {MAX_TIMEOUT_MS} ms"
+        ));
     }
     if port == 0 {
         return Err("TCP destination port must be between 1 and 65535".to_owned());
