@@ -42,12 +42,29 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     widget.set_locations([{
         "ip": "8.8.8.8", "latitude": 37.4, "longitude": -122.0,
         "country": "United States", "region": "California", "city": "Mountain View",
+        "process_id": 4321, "process_name": "browser.exe", "protocol": "TCP",
+        "port": 443, "local_port": 51000, "connection_state": "ESTABLISHED",
+        "asn": 15169, "organization": "Google LLC",
+        "traffic_upload_bytes": 4096, "traffic_download_bytes": 8192,
+        "traffic_upload_bps": 512.0, "traffic_download_bps": 2048.0,
+        "traffic_flow_count": 1,
     }])
     assert WorldMap.MAP_STYLE_URL == "https://tiles.openfreemap.org/styles/dark"
     assert len(widget._features) == 1
     assert widget._features[0]["geometry"]["coordinates"] == [-122.0, 37.4]
     assert widget._features[0]["properties"]["ip"] == "8.8.8.8"
-    assert "maplibregl.Map" in WorldMap._map_html()
+    properties = widget._features[0]["properties"]
+    assert properties["process_name"] == "browser.exe"
+    assert properties["process_id"] == 4321
+    assert properties["traffic_upload_bps"] == 512.0
+    assert properties["traffic_download_bps"] == 2048.0
+    assert properties["traffic_bps"] == 2560.0
+    assert properties["traffic_known"] == 1
+    html = WorldMap._map_html()
+    assert "endpoint-glow" in html
+    assert "swarm-popup" in html
+    assert "Upload speed" in html
+    assert "maplibregl.Map" in html
     assert "cluster:true" in WorldMap._map_html()
     assert "getClusterExpansionZoom" in WorldMap._map_html()
     widget.zoom_in()
