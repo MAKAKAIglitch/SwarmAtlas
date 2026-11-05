@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from swarmatlas import config
 from swarmatlas.theme import get_palette
-from swarmatlas.ui import GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, TrafficChart, WorldMap
+from swarmatlas.ui import GeoIPDatabaseDialog, GeoIPProviderDialog, MainWindow, SmoothScrollArea, TrafficChart, WorldMap
 
 
 class _FakeWebEngineSettings:
@@ -96,6 +96,8 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     properties = widget._features[0]["properties"]
     assert properties["process_name"] == "browser.exe"
     assert properties["process_id"] == 4321
+    assert properties["company_name"] == "Google"
+    assert properties["company_icon"] == "company-google"
     assert properties["traffic_upload_bps"] == 512.0
     assert properties["traffic_download_bps"] == 2048.0
     assert properties["traffic_bps"] == 2560.0
@@ -114,12 +116,42 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert "getClusterExpansionZoom" in WorldMap._map_html()
     assert "clusterProperties" in WorldMap._map_html()
     assert "endpoint-cluster-glow" in WorldMap._map_html()
+    assert "endpoint-company-icons" in html
+    assert "simple-icons@16.36.0" in html
+    assert "Network owner" in html
     widget.zoom_in()
     assert widget._zoom > 1.15
     widget.zoom_out()
     widget.reset_view()
     assert widget._zoom == 1.15
     widget.deleteLater()
+    app.processEvents()
+
+
+def test_company_network_detection_uses_known_asn_and_safe_fallback() -> None:
+    assert WorldMap._company_for_network(15169, "Google LLC") == (
+        "Google", "google", "#4285F4"
+    )
+    assert WorldMap._company_for_network(13335, "Cloudflare, Inc.")[0] == "Cloudflare"
+    assert WorldMap._company_for_network(64512, "Unknown Transit") is None
+
+
+def test_smooth_scroll_area_uses_interruptible_eased_animation() -> None:
+    app = QApplication.instance() or QApplication([])
+    area = SmoothScrollArea()
+    content = QWidget()
+    content.setMinimumHeight(1200)
+    area.setWidgetResizable(True)
+    area.setWidget(content)
+    area.resize(320, 240)
+    area.show()
+    app.processEvents()
+    assert area._scroll_animation.duration() == 360
+    assert area._scroll_animation.easingCurve().type().name == "OutCubic"
+    area.scroll_to_value(180, 200)
+    assert area._scroll_animation.endValue() == 180
+    area.close()
+    area.deleteLater()
     app.processEvents()
 
 
