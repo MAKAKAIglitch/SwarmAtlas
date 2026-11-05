@@ -97,7 +97,7 @@ def test_world_map_uses_openfreemap_dark_and_accepts_endpoints(tmp_path: Path, m
     assert properties["process_name"] == "browser.exe"
     assert properties["process_id"] == 4321
     assert properties["company_name"] == "Google"
-    assert properties["company_icon"] == "company-google"
+    assert properties["company_icon"] == "company-as15169"
     assert properties["traffic_upload_bps"] == 512.0
     assert properties["traffic_download_bps"] == 2048.0
     assert properties["traffic_bps"] == 2560.0
@@ -134,6 +134,9 @@ def test_company_network_detection_uses_known_asn_and_safe_fallback() -> None:
     )
     assert WorldMap._company_for_network(13335, "Cloudflare, Inc.")[0] == "Cloudflare"
     assert WorldMap._company_for_network(64512, "Unknown Transit") is None
+    assert WorldMap._company_for_network(16509, "Amazon.com, Inc.") == (
+        "Amazon Web Services", "", "#FF9900"
+    )
 
 
 def test_smooth_scroll_area_uses_interruptible_eased_animation() -> None:
