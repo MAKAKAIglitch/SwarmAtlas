@@ -31,7 +31,7 @@ The app should run as a normal Windows user. It must not request administrator p
 
 ## Network behavior and GeoIP privacy
 
-The default DB-IP Lite mode performs local address lookups after its static MMDB file has been downloaded. The observed destination IPs are not sent to DB-IP or Natural Earth for those lookups.
+The default DB-IP Lite mode performs local address lookups after its static MMDB file has been downloaded. The observed destination IPs are not sent to DB-IP for those local lookups.
 
 The map loads MapLibre GL assets from the pinned unpkg release and the OpenFreeMap Dark style and vector tiles for the visible viewport. The relevant services see the user's public source IP and requested style/tile coordinates. These requests do not contain the application's observed destination IP list, process metadata or traffic counters. Attribution is displayed in the map. The application does not prefetch or bulk-download map tiles.
 
