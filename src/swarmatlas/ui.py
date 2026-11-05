@@ -479,14 +479,39 @@ window.maplibregl=maplibregl;
   compact:true,customAttribution:'<a href="https://openfreemap.org/" target="_blank">© OpenFreeMap</a>'
  }}),'bottom-right');
  map.on('load',function(){{
-  map.addSource('swarm-endpoints',{{type:'geojson',data:{{type:'FeatureCollection',features:window.pendingSwarmFeatures||[]}}}});
+  map.addSource('swarm-endpoints',{{
+   type:'geojson',data:{{type:'FeatureCollection',features:window.pendingSwarmFeatures||[]}},
+   cluster:true,clusterRadius:48,clusterMaxZoom:5
+  }});
+  map.addLayer({{
+   id:'endpoint-clusters',type:'circle',source:'swarm-endpoints',
+   filter:['has','point_count'],
+   paint:{{
+    'circle-color':['step',['get','point_count'],'#2563eb',25,'#0ea5e9',100,'#0f766e'],
+    'circle-radius':['step',['get','point_count'],14,25,19,100,24],
+    'circle-stroke-color':'#071321','circle-stroke-width':1.5
+   }}
+  }});
+  map.addLayer({{
+   id:'endpoint-cluster-count',type:'symbol',source:'swarm-endpoints',
+   filter:['has','point_count'],
+   layout:{{'text-field':['get','point_count_abbreviated'],'text-size':11}},
+   paint:{{'text-color':'#ffffff'}}
+  }});
   map.addLayer({{
    id:'swarm-endpoints',type:'circle',source:'swarm-endpoints',
+   filter:['!', ['has','point_count']],
    paint:{{
     'circle-radius':['interpolate',['linear'],['zoom'],1,3.5,6,5.5,12,7],
     'circle-color':'#48cfff','circle-opacity':0.9,
     'circle-stroke-color':'#071321','circle-stroke-width':1.5
    }}
+  }});
+  map.on('click','endpoint-clusters',async function(event){{
+   const feature=event.features&&event.features[0];if(!feature)return;
+   const source=map.getSource('swarm-endpoints');
+   const zoom=await source.getClusterExpansionZoom(feature.properties.cluster_id);
+   map.easeTo({{center:feature.geometry.coordinates,zoom:zoom}});
   }});
   map.on('mouseenter','swarm-endpoints',function(){{map.getCanvas().style.cursor='pointer';}});
   map.on('mouseleave','swarm-endpoints',function(){{map.getCanvas().style.cursor='';}});
