@@ -199,6 +199,7 @@ class DiagnosticsDialog(QDialog):
         self._ping_process: QProcess | None = None
         self._trace_process: QProcess | None = None
         self._trace_worker: _TracerouteWorker | None = None
+        self._trace_failed = False
         self._ping_samples: list[float] = []
         self._ping_sent = 0
         self._ping_buffer = ""
@@ -476,6 +477,7 @@ class DiagnosticsDialog(QDialog):
 
 
     def _start_native_traceroute(self, target: str, method: str) -> None:
+        self._trace_failed = False
         self._trace_buffer = ""
         self.trace_table.setRowCount(0)
         self.trace_status.setText(
@@ -524,6 +526,8 @@ class DiagnosticsDialog(QDialog):
             worker.start()
 
     def _native_trace_completed(self, cancelled: bool) -> None:
+        if self._trace_failed:
+            return
         if cancelled:
             self.trace_status.setText(self.t("diagnostics_trace_cancelled"))
         elif self.trace_table.rowCount():
@@ -532,6 +536,7 @@ class DiagnosticsDialog(QDialog):
             self.trace_status.setText(self.t("diagnostics_trace_no_hops"))
 
     def _native_trace_failed(self, message: str) -> None:
+        self._trace_failed = True
         self.trace_status.setText(f"{self.t('diagnostics_process_error')} {message}")
 
     def _native_trace_thread_finished(self) -> None:
