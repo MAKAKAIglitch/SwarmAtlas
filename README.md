@@ -212,13 +212,13 @@ Close SwarmAtlas and run update_project.bat.
 - If a Rust extension is already installed, the updater checks for a refreshed tested wheel or local release build and verifies its SHA-256 before replacing it.
 - The updater does not silently stash, reset or rewrite local Git commits.
 
-## Planned roadmap (future work, not implemented yet)
+## Planned roadmap
 
-The following ideas are intentionally recorded here so they are not forgotten. They are design goals, not features available in the current build.
+Network diagnostics are now available from **Network diagnostics…** in the sidebar.
 
+- **Ping diagnostics — implemented:** run a bounded ping test or continuous ping against an IP address or hostname; select IPv4/IPv6; configure echo count and timeout; view sent/received/lost packets, loss percentage, min/average/max RTT and mean absolute change between consecutive RTT samples (jitter). Continuous tests can be stopped. A missing ICMP reply is reported as possible filtering or an unreachable destination, not proof that the host is offline.
+- **Traceroute — initial ICMP implementation:** trace IPv4 or IPv6 routes with configurable maximum hops and per-hop timeout. The live table shows hop number, responding IP address, reverse-DNS name, the returned RTT samples and unanswered hops. Routers may suppress or rate-limit replies. The current Windows backend uses the built-in `tracert.exe`, which provides ICMP probing; UDP and TCP methods are visibly unavailable and remain future work rather than being simulated.
 - **iperf3 speed test:** add an optional, manually started bandwidth test against public iperf3 servers. Discover and verify servers from a maintained server directory, show country/provider/latency and server availability, and let the user choose a server and test duration. Respect each server's published usage policy, use conservative defaults, and clearly separate the speed-test result from SwarmAtlas' passive traffic counters. Public servers can disappear, become busy or restrict testing, so availability must be checked rather than assumed.
-- **Ping diagnostics:** allow one-shot and continuous ping to a chosen IP/hostname; show RTT, min/average/max, jitter, packet loss and timeouts. Keep the test cancellable and distinguish ICMP filtering from a host being offline.
-- **Traceroute:** trace a route to a chosen destination with selectable ICMP/UDP/TCP probing where supported; list hop number, address, reverse-DNS name, RTT and unanswered hops. Support IPv4 and IPv6 and explain that routers may hide or rate-limit replies.
 - **Route visualization on the map:** draw the measured hop sequence, place hop markers using approximate GeoIP coordinates when available, show per-hop latency and missing replies, and keep the route visually distinct from ordinary observed peer connections. GeoIP locations are estimates, not physical router positions; routes can change between tests.
 - **Map layers and test history:** allow switching between peer activity, ping targets, traceroute paths and speed-test server/results. Save diagnostic history locally only when the user enables it.
 - **Better UDP destination visibility:** investigate Windows ETW/network-event metadata or another documented, read-only source that can expose UDP source/destination tuples. Keep local UDP socket counts separate from verified remote peers, avoid fabricating endpoints, and do not capture or store packet payloads.
