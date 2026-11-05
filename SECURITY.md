@@ -10,7 +10,7 @@ Allowed operations:
 - Read process IDs and, when permitted, process names for observed connections.
 - Read local GeoIP MMDB files selected by the user.
 - Download the public DB-IP Lite City database and Natural Earth map-boundary datasets during first-run setup or scheduled DB-IP refresh. These reference-data downloads do not contain observed peer IPs, process names, PIDs or traffic statistics.
-- Request OpenStreetMap standard raster tiles for the tiles visible in the current map viewport, using the application's own User-Agent. Tile requests contain tile coordinates, not observed endpoint IPs or traffic totals. Separate Qt disk caches for the dashboard and expanded map follow HTTP cache headers and are each limited to 128 MiB.
+- Load the pinned MapLibre GL JavaScript/CSS assets from unpkg and request the OpenFreeMap Dark style, vector tiles and required glyph resources for the visible map viewport. Qt WebEngine uses a disk cache capped at 128 MiB. These requests expose the user's public source IP and viewed tile coordinates to the respective services, but do not include observed destination IPs, process metadata or traffic counters.
 - If the user explicitly selects an online GeoIP provider, send the public destination IP being looked up to that selected provider. No process names, PIDs, traffic totals or packet contents are included in the lookup.
 - Install the project's declared Python dependencies and, when available, a verified prebuilt Rust wheel from the project's public GitHub release during Windows first-run setup.
 - Write local settings, provider quota counters, traffic history, endpoint metadata and diagnostics to local application-data/storage directories.
@@ -33,7 +33,7 @@ The app should run as a normal Windows user. It must not request administrator p
 
 The default DB-IP Lite mode performs local address lookups after its static MMDB file has been downloaded. The observed destination IPs are not sent to DB-IP or Natural Earth for those lookups.
 
-The base map requests standard tiles from tile.openstreetmap.org only for the area currently visible. The OSM tile server sees the user's public source IP and the requested tile coordinates (which reveal the broad map area being viewed). These requests do not contain the application's observed destination IP list, process metadata, or traffic counters. Tile attribution is displayed on the map. The app does not prefetch or bulk-download tiles; it follows the [OSM tile usage policy](https://operations.osmfoundation.org/policies/tiles/).
+The map loads MapLibre GL assets from the pinned unpkg release and the OpenFreeMap Dark style and vector tiles for the visible viewport. The relevant services see the user's public source IP and requested style/tile coordinates. These requests do not contain the application's observed destination IP list, process metadata or traffic counters. Attribution is displayed in the map. The application does not prefetch or bulk-download map tiles.
 
 Online GeoIP is opt-in and sends the selected public destination IP to exactly one configured provider. The provider also sees the user's public source IP as the normal source of the HTTPS/HTTP request (and the account token when required):
 - IP-API.com (free endpoint: HTTP, non-commercial use only);
