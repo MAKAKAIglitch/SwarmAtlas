@@ -75,6 +75,7 @@ def backend_status() -> str:
                 (NATIVE_INTERFACE_COUNTERS, "interface counters"),
                 (NATIVE_PROCESS_NAMES, "process lookup"),
                 (NATIVE_TCP_FLOW_STATS, "TCP flow counters"),
+                (NATIVE_TRACEROUTE, "ICMP/UDP/TCP traceroute"),
             ) if enabled
         ]
         suffix = f" · {' · '.join(features)}" if features else ""
@@ -290,6 +291,7 @@ def traceroute_probe(
     ttl: int,
     timeout_ms: int = 1000,
     port: int = 443,
+    family: int = 0,
 ) -> dict[str, Any]:
     """Perform one bounded Rust traceroute probe for a single hop."""
     if not NATIVE_TRACEROUTE or _native is None:
@@ -300,13 +302,16 @@ def traceroute_probe(
     ttl = int(ttl)
     timeout_ms = int(timeout_ms)
     port = int(port)
+    family = int(family)
     if not 1 <= ttl <= 64:
         raise ValueError("ttl must be between 1 and 64")
     if not 100 <= timeout_ms <= 10_000:
         raise ValueError("timeout_ms must be between 100 and 10000")
     if not 1 <= port <= 65535:
         raise ValueError("port must be between 1 and 65535")
-    row = _native.traceroute_probe(str(target), method, ttl, timeout_ms, port)
+    if family not in {0, 4, 6}:
+        raise ValueError("family must be 0, 4, or 6")
+    row = _native.traceroute_probe(str(target), method, ttl, timeout_ms, port, family)
     if not isinstance(row, (tuple, list)) or len(row) != 4:
         raise RuntimeError("The Rust traceroute backend returned an invalid probe result")
     address, rtt, reached, status = row
