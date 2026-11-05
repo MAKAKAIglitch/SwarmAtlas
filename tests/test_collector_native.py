@@ -308,8 +308,31 @@ def test_native_interface_snapshot_is_used_without_psutil_enumeration(monkeypatc
     )
 
     assert collector._read_interface_snapshot() == expected
-    assert collector.available_interfaces() == sorted(expected)
+    assert collector.available_interfaces() == ["Wi-Fi"]
 
+
+
+def test_available_interfaces_hides_windows_filter_components_but_keeps_vpn(monkeypatch) -> None:
+    snapshot = {
+        "Ethernet": {"is_up": True, "bytes_sent": 1, "bytes_recv": 2},
+        "Ethernet 2-WFP 802.3 MAC Layer Lightweight Filter-0000": {
+            "is_up": True, "bytes_sent": 0, "bytes_recv": 0,
+        },
+        "Ethernet 2-QoS Packet Scheduler-0000": {
+            "is_up": True, "bytes_sent": 0, "bytes_recv": 0,
+        },
+        "Ethernet 2-VirtualBox NDIS Light-Weight Filter-0000": {
+            "is_up": True, "bytes_sent": 0, "bytes_recv": 0,
+        },
+        "Loopback Pseudo-Interface 1": {
+            "is_up": True, "bytes_sent": 0, "bytes_recv": 0,
+        },
+        "WireGuard Tunnel": {"is_up": True, "bytes_sent": 3, "bytes_recv": 4},
+        "Disconnected Ethernet": {"is_up": False, "bytes_sent": 0, "bytes_recv": 0},
+    }
+    monkeypatch.setattr(collector, "_read_interface_snapshot", lambda: snapshot)
+
+    assert collector.available_interfaces() == ["Ethernet", "WireGuard Tunnel"]
 
 def test_interface_snapshot_falls_back_to_psutil(monkeypatch) -> None:
     monkeypatch.setattr(collector, "NATIVE_INTERFACE_COUNTERS", False)
