@@ -68,6 +68,7 @@ def test_main_window_exposes_system_theme_language_and_region_views(
     assert window.language_combo.currentData() == "system"
     assert window.regions_table.columnCount() == 2
     assert window.map_expand_button.text()
+    assert isinstance(window.scroll_area, SmoothScrollArea)
 
     window.close()
     window.deleteLater()
