@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 chcp 65001 >nul
 title SwarmAtlas - Network Repair
 
@@ -120,26 +120,31 @@ if errorlevel 1 (
     echo DHCP check completed.
 )
 
-if "%MODE%"=="2" (
-    echo.
-    echo Winsock reset affects the entire Windows networking stack.
-    echo VPN clients, endpoint security software and other network tools may
-    echo need repair afterwards. A Windows restart may be required.
-    set /p "WINSOCK_CONFIRM=Type RESET to also reset Winsock, or press Enter to skip: "
-    if /i "!WINSOCK_CONFIRM!"=="RESET" (
-        echo [4/4] Resetting Winsock catalog...
-        echo Winsock reset confirmed.>>"%LOG_FILE%"
-        netsh winsock reset >>"%LOG_FILE%" 2>&1
-        if errorlevel 1 (
-            echo ERROR: Winsock reset returned an error. See log.
-            goto :repair_failed
-        )
-        echo Winsock reset command completed. Restart Windows when convenient.
-    ) else (
-        echo Winsock reset skipped. Standard adapter repair remains complete.
-        echo Winsock reset skipped by user.>>"%LOG_FILE%"
-    )
+if "%MODE%"=="2" goto :winsock_prompt
+goto :verify_adapter
+
+:winsock_prompt
+echo.
+echo Winsock reset affects the entire Windows networking stack.
+echo VPN clients, endpoint security software and other network tools may
+echo need repair afterwards. A Windows restart may be required.
+set /p "WINSOCK_CONFIRM=Type RESET to also reset Winsock, or press Enter to skip: "
+if /i "%WINSOCK_CONFIRM%"=="RESET" goto :winsock_reset
+echo Winsock reset skipped. Standard adapter repair remains complete.
+echo Winsock reset skipped by user.>>"%LOG_FILE%"
+goto :verify_adapter
+
+:winsock_reset
+echo [4/4] Resetting Winsock catalog...
+echo Winsock reset confirmed.>>"%LOG_FILE%"
+netsh winsock reset >>"%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo ERROR: Winsock reset returned an error. See log.
+    goto :repair_failed
 )
+echo Winsock reset command completed. Restart Windows when convenient.
+
+:verify_adapter
 
 echo.
 echo Verifying adapter state...
