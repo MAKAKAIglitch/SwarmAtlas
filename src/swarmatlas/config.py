@@ -28,6 +28,8 @@ class AppConfig:
     geoip_provider: str = "dbip"
     geoip_api_key: str = ""
     geoip_api_keys: dict[str, str] = field(default_factory=dict)
+    tcp_flow_stats_enabled: bool = False
+    iperf_executable: str = ""
 
     def configured_geoip_databases(self) -> list[str]:
         """Return only user-selected databases, excluding the automatic DB-IP fallback."""
@@ -97,6 +99,8 @@ class AppConfig:
                 geoip_provider=provider,
                 geoip_api_key=api_keys.get(provider, ""),
                 geoip_api_keys=api_keys,
+                tcp_flow_stats_enabled=raw.get("tcp_flow_stats_enabled") is True,
+                iperf_executable=str(raw.get("iperf_executable", "")).strip(),
             )
         except (OSError, ValueError, TypeError):
             return cls()

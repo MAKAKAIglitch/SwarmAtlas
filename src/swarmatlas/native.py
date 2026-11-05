@@ -15,6 +15,7 @@ NATIVE_CAPABILITIES: frozenset[str] = frozenset()
 NATIVE_MAP_GEOMETRY = False
 NATIVE_INTERFACE_COUNTERS = False
 NATIVE_PROCESS_NAMES = False
+NATIVE_TCP_FLOW_STATS = False
 
 try:
     import _swarmatlas_native as candidate
@@ -42,6 +43,9 @@ try:
     NATIVE_PROCESS_NAMES = "process-names-v1" in capabilities and callable(
         getattr(candidate, "resolve_process_names", None)
     )
+    NATIVE_TCP_FLOW_STATS = "tcp-flow-estats-v1" in capabilities and callable(
+        getattr(candidate, "collect_tcp_flow_stats", None)
+    )
 except Exception as exc:
     # An incompatible or partially installed extension must never prevent the
     # Python collector and the rest of the desktop application from starting.
@@ -53,6 +57,7 @@ except Exception as exc:
     NATIVE_MAP_GEOMETRY = False
     NATIVE_INTERFACE_COUNTERS = False
     NATIVE_PROCESS_NAMES = False
+    NATIVE_TCP_FLOW_STATS = False
 
 
 def backend_status() -> str:
@@ -62,6 +67,7 @@ def backend_status() -> str:
                 (NATIVE_MAP_GEOMETRY, "map geometry"),
                 (NATIVE_INTERFACE_COUNTERS, "interface counters"),
                 (NATIVE_PROCESS_NAMES, "process lookup"),
+                (NATIVE_TCP_FLOW_STATS, "TCP flow counters"),
             ) if enabled
         ]
         suffix = f" · {' · '.join(features)}" if features else ""
@@ -190,6 +196,47 @@ def list_tcp_connections(limit: int = 2000) -> list[dict[str, Any]]:
         if len(result) >= max_results:
             break
 
+    return result
+
+
+def collect_tcp_flow_stats(limit: int = 2000) -> list[dict[str, Any]]:
+    """Read opt-in Windows TCP payload counters through the Rust extension."""
+    if not NATIVE_TCP_FLOW_STATS or _native is None:
+        raise RuntimeError("The Rust TCP flow-statistics capability is not installed")
+
+    max_results = max(1, min(int(limit), 100_000))
+    rows = _native.collect_tcp_flow_stats(max_results)
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        if len(row) != 6:
+            continue
+        remote_ip, remote_port, process_id, local_port, upload_bytes, download_bytes = row
+        try:
+            address = ipaddress.ip_address(str(remote_ip))
+            remote_port = int(remote_port)
+            process_id = int(process_id)
+            local_port = int(local_port)
+            upload_bytes = int(upload_bytes)
+            download_bytes = int(download_bytes)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not address.is_global or not (1 <= remote_port <= 65535):
+            continue
+        if not (0 <= local_port <= 65535 and 0 <= process_id <= 0xFFFFFFFF):
+            continue
+        if upload_bytes < 0 or download_bytes < 0:
+            continue
+        result.append({
+            "ip": str(address),
+            "port": remote_port,
+            "protocol": "TCP",
+            "process_id": process_id,
+            "local_port": local_port,
+            "upload_counter": upload_bytes,
+            "download_counter": download_bytes,
+        })
+        if len(result) >= max_results:
+            break
     return result
 
 

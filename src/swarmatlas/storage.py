@@ -117,6 +117,23 @@ class Store:
                     active INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (ip, port, protocol, process_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS traffic_flows (
+                    ip TEXT NOT NULL,
+                    port INTEGER NOT NULL,
+                    protocol TEXT NOT NULL,
+                    process_id INTEGER NOT NULL DEFAULT 0,
+                    local_port INTEGER NOT NULL DEFAULT 0,
+                    upload_bytes INTEGER NOT NULL DEFAULT 0,
+                    download_bytes INTEGER NOT NULL DEFAULT 0,
+                    last_upload_counter INTEGER NOT NULL DEFAULT 0,
+                    last_download_counter INTEGER NOT NULL DEFAULT 0,
+                    first_seen REAL NOT NULL,
+                    last_seen REAL NOT NULL,
+                    PRIMARY KEY (ip, port, protocol, process_id, local_port)
+                );
+                CREATE INDEX IF NOT EXISTS idx_traffic_flows_last_seen
+                    ON traffic_flows(last_seen);
                 """
             )
             self._migrate_destinations()
@@ -434,6 +451,85 @@ class Store:
                     )
                 self._last_destination_prune = timestamp
 
+    def record_tcp_flow_counters(
+        self, rows: list[dict[str, Any]], timestamp: float | None = None
+    ) -> None:
+        """Accumulate per-connection TCP payload counters without mixing directions."""
+        now = timestamp if timestamp is not None else time.time()
+        with self._lock, self._db:
+            for item in rows:
+                try:
+                    ip = str(item["ip"])
+                    port = int(item["port"])
+                    process_id = int(item.get("process_id") or 0)
+                    local_port = int(item.get("local_port") or 0)
+                    upload_counter = max(0, int(item["upload_counter"]))
+                    download_counter = max(0, int(item["download_counter"]))
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    continue
+                if not ip or not (1 <= port <= 65535):
+                    continue
+                if not (0 <= process_id <= 0xFFFFFFFF and 0 <= local_port <= 65535):
+                    continue
+
+                key = (ip, port, "TCP", process_id, local_port)
+                previous = self._db.execute(
+                    """
+                    SELECT upload_bytes, download_bytes,
+                           last_upload_counter, last_download_counter
+                    FROM traffic_flows
+                    WHERE ip = ? AND port = ? AND protocol = ?
+                      AND process_id = ? AND local_port = ?
+                    """,
+                    key,
+                ).fetchone()
+
+                if previous is None:
+                    upload_delta = upload_counter
+                    download_delta = download_counter
+                    self._db.execute(
+                        """
+                        INSERT INTO traffic_flows (
+                            ip, port, protocol, process_id, local_port,
+                            upload_bytes, download_bytes, last_upload_counter,
+                            last_download_counter, first_seen, last_seen
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (*key, upload_delta, download_delta, upload_counter,
+                         download_counter, now, now),
+                    )
+                else:
+                    previous_upload = int(previous["last_upload_counter"])
+                    previous_download = int(previous["last_download_counter"])
+                    upload_delta = (
+                        upload_counter - previous_upload
+                        if upload_counter >= previous_upload else upload_counter
+                    )
+                    download_delta = (
+                        download_counter - previous_download
+                        if download_counter >= previous_download else download_counter
+                    )
+                    self._db.execute(
+                        """
+                        UPDATE traffic_flows
+                        SET upload_bytes = ?, download_bytes = ?,
+                            last_upload_counter = ?, last_download_counter = ?,
+                            last_seen = ?
+                        WHERE ip = ? AND port = ? AND protocol = ?
+                          AND process_id = ? AND local_port = ?
+                        """,
+                        (
+                            int(previous["upload_bytes"]) + upload_delta,
+                            int(previous["download_bytes"]) + download_delta,
+                            upload_counter, download_counter, now, *key,
+                        ),
+                    )
+
+            self._db.execute(
+                "DELETE FROM traffic_flows WHERE last_seen < ?",
+                (now - DESTINATION_RETENTION_SEC,),
+            )
+
     def destination_summary(self, now: float | None = None) -> dict[str, Any]:
         """Load the slower-changing endpoint, country and region views."""
         current = now if now is not None else time.time()
@@ -487,11 +583,51 @@ class Store:
                 """,
                 (current - ENDPOINT_ACTIVE_WINDOW_SEC,),
             ).fetchall()
+            top_destinations = self._db.execute(
+                """
+                SELECT f.ip, f.port, f.protocol, f.process_id,
+                       SUM(f.upload_bytes) AS upload_bytes,
+                       SUM(f.download_bytes) AS download_bytes,
+                       MAX(d.process_name) AS process_name,
+                       MAX(d.country) AS country,
+                       MAX(d.region) AS region,
+                       MAX(d.city) AS city,
+                       MAX(d.asn) AS asn,
+                       MAX(COALESCE(d.organization, d.isp)) AS organization
+                FROM traffic_flows AS f
+                LEFT JOIN destinations AS d
+                  ON d.ip = f.ip AND d.port = f.port
+                 AND d.protocol = f.protocol AND d.process_id = f.process_id
+                GROUP BY f.ip, f.port, f.protocol, f.process_id
+                ORDER BY (SUM(f.upload_bytes) + SUM(f.download_bytes)) DESC
+                LIMIT 50
+                """
+            ).fetchall()
+            top_companies = self._db.execute(
+                """
+                SELECT
+                    COALESCE(MAX(d.organization), MAX(d.isp), 'Unknown') AS organization,
+                    MAX(d.asn) AS asn,
+                    COUNT(DISTINCT f.ip) AS addresses,
+                    SUM(f.upload_bytes) AS upload_bytes,
+                    SUM(f.download_bytes) AS download_bytes
+                FROM traffic_flows AS f
+                LEFT JOIN destinations AS d
+                  ON d.ip = f.ip AND d.port = f.port
+                 AND d.protocol = f.protocol AND d.process_id = f.process_id
+                GROUP BY COALESCE(d.asn, 0),
+                         COALESCE(d.organization, d.isp, 'Unknown')
+                ORDER BY (SUM(f.upload_bytes) + SUM(f.download_bytes)) DESC
+                LIMIT 50
+                """
+            ).fetchall()
 
         return {
             "active_endpoints": [dict(row) for row in destinations],
             "countries": [dict(row) for row in countries],
             "regions": [dict(row) for row in regions],
+            "top_destinations": [dict(row) for row in top_destinations],
+            "top_companies": [dict(row) for row in top_companies],
         }
 
     def summary(self, interface: str, now: float | None = None) -> dict[str, Any]:

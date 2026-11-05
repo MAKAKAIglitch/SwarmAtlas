@@ -22,6 +22,8 @@ from .native import (
     list_tcp_connections,
     NATIVE_INTERFACE_COUNTERS,
     NATIVE_PROCESS_NAMES,
+    NATIVE_TCP_FLOW_STATS,
+    collect_tcp_flow_stats,
     list_network_interfaces,
     resolve_process_names,
 )
@@ -510,6 +512,7 @@ class NetworkWorker(QThread):
         self._requested_geoip_databases = tuple(config.configured_geoip_databases())
         self._requested_geoip_provider = config.geoip_provider
         self._requested_geoip_api_key = config.geoip_api_key
+        self._requested_tcp_flow_stats = bool(config.tcp_flow_stats_enabled)
         self._history_range_seconds = 3600
         self._power_saver_mode = False
         self._stop_event = threading.Event()
@@ -542,6 +545,11 @@ class NetworkWorker(QThread):
         with self._lock:
             self._requested_geoip_provider = provider
             self._requested_geoip_api_key = api_key
+
+    def set_tcp_flow_stats_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._requested_tcp_flow_stats = bool(enabled)
+        self._wake_event.set()
 
     def set_history_range(self, seconds: int) -> None:
         with self._lock:
@@ -659,6 +667,8 @@ class NetworkWorker(QThread):
             cached_history_range: int | None = None
             last_history_refresh = 0.0
             cached_interface_stats: dict[str, Any] | None = None
+            flow_stats_status = "TCP flow statistics disabled"
+            flow_stats_was_enabled = False
             connection_status = "Waiting for first network sample"
 
             while not self._stop_event.is_set():
@@ -672,6 +682,7 @@ class NetworkWorker(QThread):
                     requested_api_key = self._requested_geoip_api_key
                     history_range_seconds = self._history_range_seconds
                     power_saver_mode = self._power_saver_mode
+                    flow_stats_requested = self._requested_tcp_flow_stats
 
                 (
                     counter_sample_interval,
@@ -765,6 +776,34 @@ class NetworkWorker(QThread):
                         scanned_endpoint_count = len(endpoints)
                         _enrich_endpoints_with_geoip(endpoints, locator)
                         store.update_destinations(endpoints, now_wall)
+
+                        if flow_stats_requested:
+                            flow_stats_was_enabled = True
+                            if not NATIVE_TCP_FLOW_STATS:
+                                flow_stats_status = (
+                                    "TCP flow statistics unavailable: Rust extension lacks "
+                                    "tcp-flow-estats-v1"
+                                )
+                            else:
+                                try:
+                                    flow_rows = collect_tcp_flow_stats(limit=2000)
+                                    store.record_tcp_flow_counters(flow_rows, now_wall)
+                                    flow_stats_status = (
+                                        f"TCP flow statistics active · {len(flow_rows)} TCP connections"
+                                    )
+                                except Exception as exc:
+                                    flow_stats_status = (
+                                        f"TCP flow statistics unavailable: "
+                                        f"{type(exc).__name__}: {exc}"
+                                    )
+                        elif flow_stats_was_enabled:
+                            flow_stats_status = (
+                                "TCP flow statistics paused; Windows may keep collection enabled "
+                                "on existing TCP connections until they close"
+                            )
+                        else:
+                            flow_stats_status = "TCP flow statistics disabled"
+
                         cached_destination_summary = store.destination_summary(now_wall)
                         owner_count = sum(
                             1 for endpoint in endpoints if endpoint.get("process_id")
@@ -835,6 +874,7 @@ class NetworkWorker(QThread):
                         "upload_bps": upload_rate,
                         "download_bps": download_rate,
                         "connection_status": connection_status,
+                        "flow_stats_status": flow_stats_status,
                         "geoip_status": locator.status,
                         "native_status": backend_status(),
                         "read_only": True,
