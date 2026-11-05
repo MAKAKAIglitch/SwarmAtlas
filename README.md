@@ -23,9 +23,21 @@ The dashboard shows upload and download independently, updates the live rates ev
 
 **Important accuracy boundary:** Whole-adapter counters do not identify which remote IP received each byte. The default connection-table monitor is a socket snapshot, not a per-flow byte counter. On supported Windows builds with the optional Rust `tcp-flow-estats-v1` capability, enabling **Application traffic statistics** collects TCP payload counters per established public TCP connection through Windows TCP ESTATS. Those counters feed per-endpoint upload/download totals and recent rates, which control map marker size and glow. Windows may deny ESTATS access unless SwarmAtlas is run as Administrator; if unavailable, the map clearly has no per-flow traffic data and the ordinary interface monitor continues working. This optional feature is TCP-only: it does not infer UDP byte totals, packet payloads, or bandwidth for every country. The map shows observed endpoints and approximate IP geolocation; its traffic glow is based only on measured TCP flow counters, never guessed values.
 
+## Manual Windows network repair
+
+The optional `tools/SwarmAtlas_Network_Repair.bat` utility is a separate, user-started maintenance tool; it is not run by the dashboard or by the passive monitor.
+
+- It requests elevation through the Windows UAC prompt and lists visible network adapters, including virtual adapters.
+- The user selects one adapter by its Windows interface index, reviews the exact actions, and must type `YES` before changes begin.
+- Standard repair flushes the DNS cache, restarts only the selected adapter, renews its DHCP lease only when DHCP is enabled, and records the final adapter status.
+- An optional second mode also resets the Windows Winsock catalog. This is system-wide, may affect VPN/security/network software, and can require a Windows restart.
+- A timestamped log is written under `%ProgramData%\SwarmAtlas\Logs`. The tool does not intentionally remove static IP settings, change DNS servers, reset routes, disable the firewall, or reset the full TCP/IP stack.
+
+The selected adapter is briefly disconnected during repair. Do not run the operation over a remote session that depends on that adapter unless you can tolerate losing the session.
+
 ## Read-only safety model
 
-The default monitor only reads OS counters, socket tables and process metadata. It does not:
+The default monitor only reads OS counters, socket tables and process metadata. It does not automatically modify network configuration. The separately documented manual repair utility is opt-in and requires interactive confirmation. The default monitor does not:
 
 - install kernel drivers, NDIS filters, packet-capture drivers, services, scheduled tasks, or startup entries;
 - install or configure WinDivert, Npcap, WinPcap, WFP filters/callouts, or firewall rules;
@@ -217,7 +229,7 @@ Close SwarmAtlas and run update_project.bat.
 Network diagnostics are now available from **Network diagnostics…** in the sidebar.
 
 - **Ping diagnostics — implemented:** run a bounded ping test or continuous ping against an IP address or hostname; select IPv4/IPv6; configure echo count and timeout; view sent/received/lost packets, loss percentage, min/average/max RTT and mean absolute change between consecutive RTT samples (jitter). Continuous tests can be stopped. A missing ICMP reply is reported as possible filtering or an unreachable destination, not proof that the host is offline.
-- **Traceroute — initial ICMP implementation:** trace IPv4 or IPv6 routes with configurable maximum hops and per-hop timeout. The live table shows hop number, responding IP address, reverse-DNS name, the returned RTT samples and unanswered hops. Routers may suppress or rate-limit replies. The current Windows backend uses the built-in `tracert.exe`, which provides ICMP probing; UDP and TCP methods are visibly unavailable and remain future work rather than being simulated.
+- **Traceroute — native Rust ICMP/UDP/TCP implementation:** trace IPv4 or IPv6 routes with per-packet TTL / Hop Limit, configurable maximum hops, per-hop timeout, 1–3 probes per hop and a configurable TCP destination port (443 by default). The live table shows hop number, responding IP address, reverse-DNS name, individual RTT samples and unanswered hops. UDP uses high destination ports and detects ICMP destination-unreachable responses; TCP uses a TTL-limited connection attempt and listens for ICMP hop responses. Windows raw ICMP sockets require running SwarmAtlas as Administrator. If the new native capability is unavailable, the UI falls back to Windows `tracert.exe` for ICMP only. Routers may suppress or rate-limit replies; a timeout is not proof that a router is offline.
 - **iperf3 speed test:** add an optional, manually started bandwidth test against public iperf3 servers. Discover and verify servers from a maintained server directory, show country/provider/latency and server availability, and let the user choose a server and test duration. Respect each server's published usage policy, use conservative defaults, and clearly separate the speed-test result from SwarmAtlas' passive traffic counters. Public servers can disappear, become busy or restrict testing, so availability must be checked rather than assumed.
 - **Route visualization on the map:** draw the measured hop sequence, place hop markers using approximate GeoIP coordinates when available, show per-hop latency and missing replies, and keep the route visually distinct from ordinary observed peer connections. GeoIP locations are estimates, not physical router positions; routes can change between tests.
 - **Map layers and test history:** allow switching between peer activity, ping targets, traceroute paths and speed-test server/results. Save diagnostic history locally only when the user enables it.
