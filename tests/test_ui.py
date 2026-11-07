@@ -78,7 +78,12 @@ def test_main_window_exposes_system_theme_language_and_region_views(
     assert window.regions_table.columnCount() == 2
     assert window.map_expand_button.text()
     assert isinstance(window.scroll_area, SmoothScrollArea)
-    assert window.nav_keys == ("overview", "destinations", "history", "applications")
+    assert window.nav_keys == (
+        "overview", "diagnostics", "destinations", "history", "applications"
+    )
+    assert window.diagnostics_card is not None
+    assert window.open_ping_button.text()
+    assert window.open_traceroute_button.text()
     assert window.app_card is not None
 
     window.close()
@@ -440,5 +445,10 @@ def test_diagnostics_dialog_exposes_ping_and_icmp_traceroute() -> None:
     assert dialog.trace_method.model().item(2).isEnabled() is NATIVE_TRACEROUTE
     assert dialog.trace_probes.value() == 3
     assert dialog.trace_port.value() == 443
+    assert dialog.tabs.currentIndex() == 0
     dialog.close()
+
+    traceroute_dialog = DiagnosticsDialog("en", initial_tab="traceroute")
+    assert traceroute_dialog.tabs.currentIndex() == 1
+    traceroute_dialog.close()
     app.processEvents()
