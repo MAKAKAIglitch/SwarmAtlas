@@ -434,6 +434,29 @@ def test_csv_export_writer_uses_utf8_bom_and_preserves_values(tmp_path: Path) ->
     assert b"8.8.8.8" in content
 
 
+def test_diagnostics_quick_actions_open_the_requested_tab(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(config, "app_data_dir", lambda: tmp_path)
+    app = QApplication.instance() or QApplication([])
+    opened_tabs: list[str] = []
+
+    class _DialogStub:
+        def __init__(self, language, parent=None, initial_tab="ping"):
+            opened_tabs.append(initial_tab)
+
+        def exec(self) -> int:
+            return 0
+
+    monkeypatch.setattr("swarmatlas.ui.DiagnosticsDialog", _DialogStub)
+    window = MainWindow()
+    window.open_ping_diagnostics()
+    window.open_traceroute_diagnostics()
+
+    assert opened_tabs == ["ping", "traceroute"]
+    window.close()
+    window.deleteLater()
+    app.processEvents()
+
+
 def test_diagnostics_dialog_exposes_ping_and_icmp_traceroute() -> None:
     app = QApplication.instance() or QApplication([])
     dialog = DiagnosticsDialog("en")
