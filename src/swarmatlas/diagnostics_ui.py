@@ -193,7 +193,7 @@ class _TracerouteWorker(QThread):
 class DiagnosticsDialog(QDialog):
     """Cancellable Windows ping and ICMP/UDP/TCP traceroute tools."""
 
-    def __init__(self, language: str, parent=None):
+    def __init__(self, language: str, parent=None, initial_tab: str = "ping"):
         super().__init__(parent)
         self.language = language
         self._ping_process: QProcess | None = None
@@ -323,6 +323,10 @@ class DiagnosticsDialog(QDialog):
         note.setWordWrap(True)
         trace_layout.addWidget(note)
         self.tabs.addTab(trace_page, self.t("diagnostics_trace_tab"))
+
+        selected_tab = 1 if str(initial_tab).casefold() == "traceroute" else 0
+        self.tabs.setCurrentIndex(selected_tab)
+        (self.trace_target if selected_tab == 1 else self.ping_target).setFocus()
 
     def t(self, key: str, **values: object) -> str:
         return tr(key, self.language, **values)
