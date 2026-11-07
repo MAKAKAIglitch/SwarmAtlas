@@ -1184,6 +1184,9 @@ class MainWindow(QMainWindow):
             QPushButton#nav {{ text-align: left; padding: 10px 12px; border: 0; border-radius: 8px; color: {c['muted']}; background: transparent; }}
             QPushButton#nav:hover {{ background: {c['surface_alt']}; color: {c['text']}; }}
             QPushButton#nav[active="true"] {{ background: {c['accent_light']}; color: {c['accent']}; font-weight: 600; }}
+            QFrame#diagnosticTool {{ background: {c['surface_alt']}; border: 1px solid {c['line']}; border-radius: 10px; }}
+            QPushButton#primary {{ background: {c['accent']}; color: white; border: 1px solid {c['accent']}; border-radius: 8px; padding: 8px 13px; font-weight: 600; }}
+            QPushButton#primary:hover {{ border-color: {c['text']}; }}
             QComboBox {{ background: {c['surface_alt']}; color: {c['text']}; border: 1px solid {c['line']}; border-radius: 8px; padding: 7px 9px; min-width: 138px; }}
             QComboBox:hover {{ border-color: {c['accent']}; }}
             QComboBox QAbstractItemView {{ background: {c['surface']}; color: {c['text']}; border: 1px solid {c['line']}; selection-background-color: {c['selection']}; outline: 0; padding: 4px; }}
@@ -1256,20 +1259,16 @@ class MainWindow(QMainWindow):
         side.addSpacing(24)
 
         self.nav_buttons: list[QPushButton] = []
-        self.nav_keys = ("overview", "destinations", "history", "applications")
+        self.nav_keys = ("overview", "diagnostics", "destinations", "history", "applications")
         for key in self.nav_keys:
-            button = QPushButton(self.t(key))
+            label_key = "diagnostics_nav" if key == "diagnostics" else key
+            button = QPushButton(self.t(label_key))
             button.setObjectName("nav")
             button.setProperty("page_key", key)
             button.setProperty("active", key == "overview")
             button.clicked.connect(lambda checked=False, page=key: self.select_page(page))
             side.addWidget(button)
             self.nav_buttons.append(button)
-
-        self.diagnostics_button = QPushButton(self.t("diagnostics_open"))
-        self.diagnostics_button.setObjectName("quiet")
-        self.diagnostics_button.clicked.connect(self.open_diagnostics)
-        side.addWidget(self.diagnostics_button)
 
         side.addStretch(1)
         self.theme_label = make_label(self.t("theme"), 9, self.palette["muted"], 600)
@@ -1346,6 +1345,72 @@ class MainWindow(QMainWindow):
         self.transfer_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.transfer_status.setMinimumHeight(26)
         content_layout.addWidget(self.transfer_status)
+
+        self.diagnostics_card = card()
+        diagnostics_layout = QVBoxLayout(self.diagnostics_card)
+        diagnostics_layout.setContentsMargins(16, 14, 16, 14)
+        diagnostics_layout.setSpacing(12)
+        diagnostics_heading = QHBoxLayout()
+        diagnostics_heading.setSpacing(10)
+        diagnostics_heading_text = QVBoxLayout()
+        diagnostics_heading_text.setSpacing(3)
+        self.diagnostics_section_title = make_label(
+            self.t("diagnostics_overview_title"), 13, self.palette["text"], 650
+        )
+        self.diagnostics_section_hint = make_label(
+            self.t("diagnostics_overview_hint"), 9, self.palette["muted"]
+        )
+        self.diagnostics_section_hint.setWordWrap(True)
+        diagnostics_heading_text.addWidget(self.diagnostics_section_title)
+        diagnostics_heading_text.addWidget(self.diagnostics_section_hint)
+        diagnostics_heading.addLayout(diagnostics_heading_text, 1)
+        diagnostics_layout.addLayout(diagnostics_heading)
+
+        diagnostics_tools = QHBoxLayout()
+        diagnostics_tools.setSpacing(10)
+
+        ping_tool = QFrame()
+        ping_tool.setObjectName("diagnosticTool")
+        ping_tool_layout = QVBoxLayout(ping_tool)
+        ping_tool_layout.setContentsMargins(14, 12, 14, 12)
+        ping_tool_layout.setSpacing(7)
+        self.ping_tool_title = make_label(
+            self.t("diagnostics_ping_tab"), 12, self.palette["text"], 650
+        )
+        self.ping_tool_description = make_label(
+            self.t("diagnostics_ping_description"), 9, self.palette["muted"]
+        )
+        self.ping_tool_description.setWordWrap(True)
+        self.open_ping_button = QPushButton(self.t("diagnostics_open_ping"))
+        self.open_ping_button.setObjectName("primary")
+        self.open_ping_button.clicked.connect(self.open_ping_diagnostics)
+        ping_tool_layout.addWidget(self.ping_tool_title)
+        ping_tool_layout.addWidget(self.ping_tool_description, 1)
+        ping_tool_layout.addWidget(self.open_ping_button, 0, Qt.AlignmentFlag.AlignLeft)
+        diagnostics_tools.addWidget(ping_tool, 1)
+
+        traceroute_tool = QFrame()
+        traceroute_tool.setObjectName("diagnosticTool")
+        traceroute_tool_layout = QVBoxLayout(traceroute_tool)
+        traceroute_tool_layout.setContentsMargins(14, 12, 14, 12)
+        traceroute_tool_layout.setSpacing(7)
+        self.traceroute_tool_title = make_label(
+            self.t("diagnostics_trace_tab"), 12, self.palette["text"], 650
+        )
+        self.traceroute_tool_description = make_label(
+            self.t("diagnostics_trace_description"), 9, self.palette["muted"]
+        )
+        self.traceroute_tool_description.setWordWrap(True)
+        self.open_traceroute_button = QPushButton(self.t("diagnostics_open_traceroute"))
+        self.open_traceroute_button.setObjectName("primary")
+        self.open_traceroute_button.clicked.connect(self.open_traceroute_diagnostics)
+        traceroute_tool_layout.addWidget(self.traceroute_tool_title)
+        traceroute_tool_layout.addWidget(self.traceroute_tool_description, 1)
+        traceroute_tool_layout.addWidget(self.open_traceroute_button, 0, Qt.AlignmentFlag.AlignLeft)
+        diagnostics_tools.addWidget(traceroute_tool, 1)
+
+        diagnostics_layout.addLayout(diagnostics_tools)
+        content_layout.addWidget(self.diagnostics_card)
 
         metrics = QHBoxLayout()
         metrics.setSpacing(12)
@@ -1586,9 +1651,17 @@ class MainWindow(QMainWindow):
         self.config.save()
         self._rebuild_ui()
 
-    def open_diagnostics(self) -> None:
-        dialog = DiagnosticsDialog(self.current_language, self)
+    def open_diagnostics(self, initial_tab: str = "ping") -> None:
+        dialog = DiagnosticsDialog(
+            self.current_language, self, initial_tab=initial_tab
+        )
         dialog.exec()
+
+    def open_ping_diagnostics(self) -> None:
+        self.open_diagnostics("ping")
+
+    def open_traceroute_diagnostics(self) -> None:
+        self.open_diagnostics("traceroute")
 
     def select_page(self, key: str) -> None:
         for button in self.nav_buttons:
@@ -1596,8 +1669,15 @@ class MainWindow(QMainWindow):
             button.setProperty("active", active)
             button.style().unpolish(button)
             button.style().polish(button)
-        self.page_title.setText(self.t("overview_title") if key == "overview" else self.t(key))
-        if key == "history":
+        title_key = (
+            "overview_title" if key == "overview"
+            else "diagnostics_nav" if key == "diagnostics"
+            else key
+        )
+        self.page_title.setText(self.t(title_key))
+        if key == "diagnostics":
+            self.scroll_area.scroll_to_widget(self.diagnostics_card, 20)
+        elif key == "history":
             self.scroll_area.scroll_to_widget(self.chart_card, 20)
         elif key == "destinations":
             self.scroll_area.scroll_to_widget(self.peers_card, 20)
