@@ -498,7 +498,6 @@ class EndpointPingBridge(QObject):
         process.deleteLater()
         self.pingResult.emit(address, result)
 
-
 class WorldMap(QWidget):
     """Responsive MapLibre map using OpenFreeMap's dark vector style."""
 
@@ -997,8 +996,7 @@ window.maplibregl=maplibregl;
                 "company_icon":company_icon, "company_color":company_color,
                 "first_seen":float(item.get("first_seen") or 0),
                 "last_seen":float(item.get("last_seen") or 0),
-            }
-            details[endpoint_id] = detail
+            }            details[endpoint_id] = detail
             detail_signature.append((
                 endpoint_id, upload_bytes, download_bytes,
                 round(upload_bps, 1), round(download_bps, 1),
@@ -1497,8 +1495,7 @@ class MainWindow(QMainWindow):
         content_layout.addLayout(middle)
 
         bottom = QHBoxLayout()
-        bottom.setSpacing(12)
-        chart_card = card()
+        bottom.setSpacing(12)        chart_card = card()
         chart_layout = QVBoxLayout(chart_card)
         chart_layout.setContentsMargins(18, 16, 18, 12)
         chart_title = QHBoxLayout()
@@ -1592,7 +1589,11 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(app_card)
         self.app_card = app_card
 
-        self.internet_monitor_card = InternetMonitorWidget(self.palette)\n        self.internet_monitor_card.setObjectName("card")\n        content_layout.addWidget(self.internet_monitor_card)\n\n        self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
+        self.internet_monitor_card = InternetMonitorWidget(self.palette)
+        self.internet_monitor_card.setObjectName("card")
+        content_layout.addWidget(self.internet_monitor_card)
+
+        self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
         content_layout.addWidget(self.data_note)
 
         scroll = SmoothScrollArea()
@@ -1997,8 +1998,7 @@ class MainWindow(QMainWindow):
     def _write_csv(path: str, headers: list[str], rows: list[list[Any]]) -> None:
         with open(path, "w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.writer(handle)
-            writer.writerow(headers)
-            writer.writerows(rows)
+            writer.writerow(headers)            writer.writerows(rows)
 
     def export_endpoints_csv(self) -> None:
         endpoints = self._last_snapshot.get("active_endpoints", [])
