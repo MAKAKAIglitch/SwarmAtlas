@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 mod geo;
 mod network;
 mod platform;
+mod ping;
 
 use platform::{
     collect_tcp_flow_stats as read_tcp_flow_stats,
@@ -165,6 +166,7 @@ fn _swarmatlas_native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(traceroute_probe, module)?)?;
     module.add_function(wrap_pyfunction!(project_and_simplify_rings, module)?)?;
     module.add_function(wrap_pyfunction!(capabilities, module)?)?;
+    module.add_function(wrap_pyfunction!(ping::ping_host, module)?)?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
