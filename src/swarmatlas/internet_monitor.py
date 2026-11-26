@@ -219,8 +219,8 @@ class InternetMonitorWidget(QWidget):
         self.summary_label.setStyleSheet(f"color:{self.palette['muted']};background:transparent")
         root.addWidget(self.summary_label)
 
-        self.target_table = QTableWidget(0, 5)
-        self.target_table.setHorizontalHeaderLabels(["Адрес", "Состояние", "Последний RTT", "Потери (10)", "Последняя проверка"])
+        self.target_table = QTableWidget(0, 6)
+        self.target_table.setHorizontalHeaderLabels(["Адрес", "Состояние", "Последний RTT", "Min / Avg / Max", "Потери (10)", "Последняя проверка"])
         self.target_table.horizontalHeader().setStretchLastSection(True)
         self.target_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.target_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
@@ -361,9 +361,15 @@ class InternetMonitorWidget(QWidget):
                 else:
                     state = "Норма"
                 latest_rtt, _, latest_time = history[0] if history else (None, "", "")
+                samples = [float(rtt) for rtt, status, _ in history if rtt is not None and status == "reply"]
+                stats = (
+                    f"{min(samples):.1f} / {sum(samples) / len(samples):.1f} / {max(samples):.1f} ms"
+                    if samples else "—"
+                )
                 values = [
                     target, state,
                     f"{latest_rtt:.2f} ms" if latest_rtt is not None else "—",
+                    stats,
                     f"{loss:.0f}%" if history else "—",
                     latest_time,
                 ]
