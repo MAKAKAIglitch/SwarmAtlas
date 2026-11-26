@@ -6,21 +6,31 @@ use std::time::Duration;
 /// Resolve one target and send one ICMP echo request through the Rust engine.
 #[pyfunction]
 #[pyo3(signature = (target, timeout_ms=1200))]
-fn ping_host(py: Python<'_>, target: String, timeout_ms: u64) -> PyResult<(String, Option<f64>, String)> {
+pub fn ping_host(
+    py: Python<'_>,
+    target: String,
+    timeout_ms: u64,
+) -> PyResult<(String, Option<f64>, String)> {
     let target = target.trim().to_owned();
     if target.is_empty() || target.len() > 253 {
-        return Err(PyValueError::new_err("target must be a hostname or IP address"));
+        return Err(PyValueError::new_err(
+            "target must be a hostname or IP address",
+        ));
     }
     if !(100..=10_000).contains(&timeout_ms) {
-        return Err(PyValueError::new_err("timeout_ms must be between 100 and 10000"));
+        return Err(PyValueError::new_err(
+            "timeout_ms must be between 100 and 10000",
+        ));
     }
 
-    py.detach(move || {
+    py.detach(move || -> Result<(String, Option<f64>, String), String> {
         let address = match target.parse::<IpAddr>() {
             Ok(ip) => ip,
-            Err(_) => (target.as_str(), 0).to_socket_addrs()
+            Err(_) => (target.as_str(), 0)
+                .to_socket_addrs()
                 .map_err(|e| format!("DNS resolution failed: {e}"))?
-                .next().ok_or_else(|| "DNS returned no addresses".to_owned())?
+                .next()
+                .ok_or_else(|| "DNS returned no addresses".to_owned())?
                 .ip(),
         };
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -32,12 +42,22 @@ fn ping_host(py: Python<'_>, target: String, timeout_ms: u64) -> PyResult<(Strin
             tokio::time::timeout(
                 Duration::from_millis(timeout_ms),
                 surge_ping::ping(address, &payload),
-            ).await
+            )
+            .await
         });
         match result {
-            Ok(Ok((_packet, elapsed))) => Ok((address.to_string(), Some(elapsed.as_secs_f64() * 1000.0), "reply".to_owned())),
-            Ok(Err(error)) => Ok((address.to_string(), None, format!("ICMP error: {error}"))),
+            Ok(Ok((_packet, elapsed))) => Ok((
+                address.to_string(),
+                Some(elapsed.as_secs_f64() * 1000.0),
+                "reply".to_owned(),
+            )),
+            Ok(Err(error)) => Ok((
+                address.to_string(),
+                None,
+                format!("ICMP error: {error}"),
+            )),
             Err(_) => Ok((address.to_string(), None, "timeout".to_owned())),
         }
-    }).map_err(PyRuntimeError::new_err)
+    })
+    .map_err(|error| PyRuntimeError::new_err(error))
 }
