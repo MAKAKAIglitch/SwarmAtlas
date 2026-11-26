@@ -327,3 +327,11 @@ def traceroute_probe(
         "reached": bool(reached),
         "status": str(status),
     }
+
+
+def ping_host(target: str, timeout_ms: int = 1200) -> dict[str, Any]:
+    """Perform a single ICMP echo request in the Rust extension."""
+    if _native is None or not callable(getattr(_native, "ping_host", None)):
+        raise RuntimeError("Rust ICMP ping capability is unavailable; rebuild native extension")
+    address, rtt_ms, status = _native.ping_host(str(target), int(timeout_ms))
+    return {"address": str(address), "rtt_ms": rtt_ms, "status": str(status)}

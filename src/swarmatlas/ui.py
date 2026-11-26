@@ -26,6 +26,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .collector import NetworkWorker, available_interfaces, should_use_power_saver
 from .diagnostics_ui import DiagnosticsDialog
+from .internet_monitor import InternetMonitorWidget
 from .config import AppConfig, app_data_dir
 from .i18n import tr, translate_status
 from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
@@ -496,7 +497,6 @@ class EndpointPingBridge(QObject):
                 result = "Нет ответа (тайм-аут или фильтрация ICMP)"
         process.deleteLater()
         self.pingResult.emit(address, result)
-
 
 class WorldMap(QWidget):
     """Responsive MapLibre map using OpenFreeMap's dark vector style."""
@@ -1180,7 +1180,7 @@ class MainWindow(QMainWindow):
             QWidget#appRoot {{ background: {window_bg}; }}
             QWidget#content {{ background: transparent; }}
             QFrame#sidebar {{ background: {sidebar_surface}; border-right: 1px solid {c['line']}; }}
-            QFrame#card {{ background: {surface}; border: 1px solid {c['line']}; border-radius: 12px; }}
+            QFrame#card, QWidget#card {{ background: {surface}; border: 1px solid {c['line']}; border-radius: 12px; }}
             QPushButton#nav {{ text-align: left; padding: 10px 12px; border: 0; border-radius: 8px; color: {c['muted']}; background: transparent; }}
             QPushButton#nav:hover {{ background: {c['surface_alt']}; color: {c['text']}; }}
             QPushButton#nav[active="true"] {{ background: {c['accent_light']}; color: {c['accent']}; font-weight: 600; }}
@@ -1207,6 +1207,9 @@ class MainWindow(QMainWindow):
         if self._map_dialog is not None:
             self._map_dialog.close()
             self._map_dialog = None
+        monitor = getattr(self, "internet_monitor_card", None)
+        if monitor is not None:
+            monitor.stop_monitoring()
         old = self.takeCentralWidget()
         if old is not None:
             old.deleteLater()
@@ -1259,9 +1262,11 @@ class MainWindow(QMainWindow):
         side.addSpacing(24)
 
         self.nav_buttons: list[QPushButton] = []
-        self.nav_keys = ("overview", "diagnostics", "destinations", "history", "applications")
+        self.nav_keys = ("overview", "diagnostics", "destinations", "history", "applications", "internet_monitor")
         for key in self.nav_keys:
             label_key = "diagnostics_nav" if key == "diagnostics" else key
+            if key == "internet_monitor":
+                label_key = "internet_monitor"
             button = QPushButton(self.t(label_key))
             button.setObjectName("nav")
             button.setProperty("page_key", key)
@@ -1586,6 +1591,10 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(app_card)
         self.app_card = app_card
 
+        self.internet_monitor_card = InternetMonitorWidget(self.palette)
+        self.internet_monitor_card.setObjectName("card")
+        content_layout.addWidget(self.internet_monitor_card)
+
         self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
         content_layout.addWidget(self.data_note)
 
@@ -1672,6 +1681,7 @@ class MainWindow(QMainWindow):
         title_key = (
             "overview_title" if key == "overview"
             else "diagnostics_nav" if key == "diagnostics"
+            else "internet_monitor" if key == "internet_monitor"
             else key
         )
         self.page_title.setText(self.t(title_key))
@@ -1683,6 +1693,8 @@ class MainWindow(QMainWindow):
             self.scroll_area.scroll_to_widget(self.peers_card, 20)
         elif key == "applications":
             self.scroll_area.scroll_to_widget(self.app_card, 20)
+        elif key == "internet_monitor":
+            self.scroll_area.scroll_to_widget(self.internet_monitor_card, 20)
         else:
             self.scroll_area.scroll_to_value(0)
 
@@ -2073,6 +2085,12 @@ class MainWindow(QMainWindow):
         update_table(self.app_table, rows)
 
     def closeEvent(self, event: Any) -> None:
+        monitor = getattr(self, "internet_monitor_card", None)
+        if monitor is not None:
+            monitor.stop_monitoring()
+            if monitor.worker is not None and monitor.worker.isRunning():
+                event.ignore()
+                return
         if self.worker.isRunning() and not self.worker.stop():
             QMessageBox.warning(self, self.t("stopping_title"), self.t("stopping_message"))
             event.ignore()
