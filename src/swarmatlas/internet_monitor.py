@@ -4,13 +4,14 @@ import ipaddress
 import json
 import sqlite3
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QComboBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QInputDialog,
     QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -75,6 +76,7 @@ class PingCycleWorker(QThread):
 
     def run(self) -> None:
         while not self._stop_event.is_set():
+            cycle_started = time.monotonic()
             completed = 0
             for target in self.targets:
                 if self._stop_event.is_set():
@@ -100,7 +102,8 @@ class PingCycleWorker(QThread):
                 self.result_ready.emit(record)
                 completed += 1
             self.cycle_finished.emit(completed)
-            if self._stop_event.wait(self.interval_seconds):
+            remaining = max(0.0, self.interval_seconds - (time.monotonic() - cycle_started))
+            if self._stop_event.wait(remaining):
                 break
 
 
@@ -119,8 +122,10 @@ class InternetMonitorWidget(QWidget):
         self.worker: PingCycleWorker | None = None
         self._init_database()
         self._build_ui()
+        self.profile_combo.setCurrentText("General")
         self._apply_profile("General")
         self._refresh_table()
+        self._refresh_history()
 
     def _load_profiles(self) -> dict[str, list[str]]:
         profiles = {key: list(value) for key, value in DEFAULT_PROFILES.items()}
@@ -205,6 +210,9 @@ class InternetMonitorWidget(QWidget):
         remove_button = QPushButton("Удалить выбранные")
         remove_button.clicked.connect(self.remove_selected)
         add_row.addWidget(remove_button)
+        save_profile_button = QPushButton("Сохранить профиль как…")
+        save_profile_button.clicked.connect(self.save_profile_as)
+        add_row.addWidget(save_profile_button)
         root.addLayout(add_row)
 
         self.summary_label = QLabel("Добавьте адреса для мониторинга. Проверки выполняются последовательно.")
@@ -257,6 +265,20 @@ class InternetMonitorWidget(QWidget):
         self._refresh_table()
         self.summary_label.setText(f"Добавлено адресов: {len(added)}. Всего в профиле: {len(self.targets)}.")
 
+    def save_profile_as(self) -> None:
+        name, accepted = QInputDialog.getText(self, "Новый профиль", "Название профиля:")
+        name = name.strip()
+        if not accepted or not name:
+            return
+        self.profiles[name] = list(self.targets)
+        self._save_profiles()
+        self.profile_combo.blockSignals(True)
+        if self.profile_combo.findText(name) < 0:
+            self.profile_combo.addItem(name)
+        self.profile_combo.setCurrentText(name)
+        self.profile_combo.blockSignals(False)
+        self.summary_label.setText(f"Профиль «{name}» сохранён ({len(self.targets)} адресов).")
+
     def remove_selected(self) -> None:
         selected = {self.target_table.item(index.row(), 0).text() for index in self.target_table.selectionModel().selectedRows()}
         if not selected:
@@ -301,13 +323,18 @@ class InternetMonitorWidget(QWidget):
             )
             db.commit()
         self._refresh_table()
-        row = self.history_table.rowCount()
-        self.history_table.insertRow(0)
-        values = [record["checked_at"], record["address"], record["status"], f"{record['rtt_ms']:.2f} ms" if record["rtt_ms"] is not None else "—"]
-        for column, value in enumerate(values):
-            self.history_table.setItem(0, column, QTableWidgetItem(value))
-        if self.history_table.rowCount() > 100:
-            self.history_table.removeRow(100)
+        self._refresh_history()
+
+    def _refresh_history(self) -> None:
+        with sqlite3.connect(self.db_path) as db:
+            rows = db.execute(
+                "SELECT checked_at,address,status,rtt_ms FROM ping_history ORDER BY id DESC LIMIT 100"
+            ).fetchall()
+        self.history_table.setRowCount(len(rows))
+        for row, record in enumerate(rows):
+            values = [record[0], record[1], record[2], f"{record[3]:.2f} ms" if record[3] is not None else "—"]
+            for column, value in enumerate(values):
+                self.history_table.setItem(row, column, QTableWidgetItem(str(value)))
 
     def _on_cycle_finished(self, completed: int) -> None:
         self.summary_label.setText(f"Цикл завершён: {completed} адресов. Следующая проверка через выбранный интервал.")
