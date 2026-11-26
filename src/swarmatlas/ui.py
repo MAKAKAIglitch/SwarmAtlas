@@ -1265,7 +1265,9 @@ class MainWindow(QMainWindow):
         self.nav_buttons: list[QPushButton] = []
         self.nav_keys = ("overview", "diagnostics", "destinations", "history", "applications", "internet_monitor")
         for key in self.nav_keys:
-            label_key = "diagnostics_nav" if key == "diagnostics" else key\n            if key == "internet_monitor":\n                label_key = "internet_monitor"
+            label_key = "diagnostics_nav" if key == "diagnostics" else key
+            if key == "internet_monitor":
+                label_key = "internet_monitor"
             button = QPushButton(self.t(label_key))
             button.setObjectName("nav")
             button.setProperty("page_key", key)
