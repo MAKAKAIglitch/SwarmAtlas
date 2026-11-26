@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+from itertools import islice
 import json
 import sqlite3
 import threading
@@ -35,15 +36,10 @@ def expand_target(value: str, limit: int = MAX_CIDR_HOSTS) -> list[str]:
     try:
         if "/" in value:
             network = ipaddress.ip_network(value, strict=False)
-            if network.num_addresses > limit:
-                raise ValueError(
-                    f"Подсеть содержит {network.num_addresses} адресов. "
-                    f"Текущий лимит — {limit}; уменьшите диапазон."
-                )
             if network.num_addresses <= 2:
                 addresses = list(network)
             else:
-                addresses = list(network.hosts())
+                addresses = list(islice(network.hosts(), limit))
             return [str(address) for address in addresses[:limit]]
         address = ipaddress.ip_address(value)
         return [str(address)]
