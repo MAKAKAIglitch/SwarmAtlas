@@ -2082,6 +2082,12 @@ class MainWindow(QMainWindow):
         update_table(self.app_table, rows)
 
     def closeEvent(self, event: Any) -> None:
+        monitor = getattr(self, "internet_monitor_card", None)
+        if monitor is not None:
+            monitor.stop_monitoring()
+            if monitor.worker is not None and monitor.worker.isRunning():
+                event.ignore()
+                return
         if self.worker.isRunning() and not self.worker.stop():
             QMessageBox.warning(self, self.t("stopping_title"), self.t("stopping_message"))
             event.ignore()
