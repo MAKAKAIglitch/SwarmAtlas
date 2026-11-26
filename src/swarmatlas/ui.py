@@ -26,6 +26,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from .collector import NetworkWorker, available_interfaces, should_use_power_saver
 from .diagnostics_ui import DiagnosticsDialog
+from .internet_monitor import InternetMonitorWidget
 from .config import AppConfig, app_data_dir
 from .i18n import tr, translate_status
 from .theme import apply_windows_mica, get_palette, resolve_language, resolve_theme
@@ -1259,9 +1260,9 @@ class MainWindow(QMainWindow):
         side.addSpacing(24)
 
         self.nav_buttons: list[QPushButton] = []
-        self.nav_keys = ("overview", "diagnostics", "destinations", "history", "applications")
+        self.nav_keys = ("overview", "diagnostics", "destinations", "history", "applications", "internet_monitor")
         for key in self.nav_keys:
-            label_key = "diagnostics_nav" if key == "diagnostics" else key
+            label_key = "diagnostics_nav" if key == "diagnostics" else key\n            if key == "internet_monitor":\n                label_key = "internet_monitor"
             button = QPushButton(self.t(label_key))
             button.setObjectName("nav")
             button.setProperty("page_key", key)
@@ -1586,7 +1587,7 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(app_card)
         self.app_card = app_card
 
-        self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
+        self.internet_monitor_card = InternetMonitorWidget(self.palette)\n        self.internet_monitor_card.setObjectName("card")\n        content_layout.addWidget(self.internet_monitor_card)\n\n        self.data_note = make_label(self.t("data_note"), 9, self.palette["muted"])
         content_layout.addWidget(self.data_note)
 
         scroll = SmoothScrollArea()
