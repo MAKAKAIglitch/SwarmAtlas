@@ -1181,7 +1181,7 @@ class MainWindow(QMainWindow):
             QWidget#appRoot {{ background: {window_bg}; }}
             QWidget#content {{ background: transparent; }}
             QFrame#sidebar {{ background: {sidebar_surface}; border-right: 1px solid {c['line']}; }}
-            QFrame#card {{ background: {surface}; border: 1px solid {c['line']}; border-radius: 12px; }}
+            QFrame#card, QWidget#card {{ background: {surface}; border: 1px solid {c['line']}; border-radius: 12px; }}
             QPushButton#nav {{ text-align: left; padding: 10px 12px; border: 0; border-radius: 8px; color: {c['muted']}; background: transparent; }}
             QPushButton#nav:hover {{ background: {c['surface_alt']}; color: {c['text']}; }}
             QPushButton#nav[active="true"] {{ background: {c['accent_light']}; color: {c['accent']}; font-weight: 600; }}
@@ -1208,6 +1208,9 @@ class MainWindow(QMainWindow):
         if self._map_dialog is not None:
             self._map_dialog.close()
             self._map_dialog = None
+        monitor = getattr(self, "internet_monitor_card", None)
+        if monitor is not None:
+            monitor.stop_monitoring()
         old = self.takeCentralWidget()
         if old is not None:
             old.deleteLater()
@@ -1673,6 +1676,7 @@ class MainWindow(QMainWindow):
         title_key = (
             "overview_title" if key == "overview"
             else "diagnostics_nav" if key == "diagnostics"
+            else "internet_monitor" if key == "internet_monitor"
             else key
         )
         self.page_title.setText(self.t(title_key))
@@ -1684,6 +1688,8 @@ class MainWindow(QMainWindow):
             self.scroll_area.scroll_to_widget(self.peers_card, 20)
         elif key == "applications":
             self.scroll_area.scroll_to_widget(self.app_card, 20)
+        elif key == "internet_monitor":
+            self.scroll_area.scroll_to_widget(self.internet_monitor_card, 20)
         else:
             self.scroll_area.scroll_to_value(0)
 
