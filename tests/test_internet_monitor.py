@@ -15,9 +15,11 @@ def test_expand_cidr_with_bounded_hosts() -> None:
     assert result == ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4", "192.0.2.5", "192.0.2.6"]
 
 
-def test_cidr_limit_is_enforced_before_scanning() -> None:
-    with pytest.raises(ValueError, match="лимит"):
-        expand_target("1.1.1.1/17", 256)
+def test_large_cidr_is_safely_truncated_to_configured_limit() -> None:
+    result = expand_target("1.1.1.1/17", 256)
+    assert len(result) == 256
+    assert result[0] == "1.1.0.1"
+    assert result[-1] == "1.1.1.0"
 
 
 def test_hostname_is_preserved_for_dns_resolution() -> None:
