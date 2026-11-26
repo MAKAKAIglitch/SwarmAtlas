@@ -196,7 +196,7 @@ class InternetMonitorWidget(QWidget):
         self.target_input.returnPressed.connect(self.add_target)
         add_row.addWidget(self.target_input, 1)
         self.cidr_limit = QSpinBox()
-        self.cidr_limit.setRange(1, 4096)
+        self.cidr_limit.setRange(1, 65536)
         self.cidr_limit.setValue(MAX_CIDR_HOSTS)
         self.cidr_limit.setToolTip("Максимум адресов, разворачиваемых из одной подсети")
         add_row.addWidget(self.cidr_limit)
